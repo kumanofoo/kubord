@@ -1,0 +1,93 @@
+name: Release Rust Musl Binaries
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*' # v1.0.0, v1.0.0-rc1 などにマッチ
+
+jobs:
+  build:
+    name: Build for ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+        include:
+          - target: x86_64-unknown-linux-musl
+            name: x86_64-musl
+          - target: aarch64-unknown-linux-musl
+            name: aarch64-musl
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (for aarch64-musl)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-musl libc6-dev-arm64-cross
+
+      - name: Build project
+        run: |
+          # 必要に応じて、プロジェクトのビルドコマンドを調整してください
+          # 例: cargo build --release --target ${{ matrix.target }}
+          # または、より複雑なビルドステップ
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary and prepare for release
+        run: |
+          # バイナリのパスと名前を調整してください
+          # 例: target/${{ matrix.target }}/release/your_app_name
+          BIN_NAME="your_app_name" # プロジェクトのバイナリ名に置き換えてください
+          mv target/${{ matrix.target }}/release/${BIN_NAME} ${BIN_NAME}-${{ matrix.name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: your_app_name-${{ matrix.name }} # 上のステップでリネームしたファイル名
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build # ビルドジョブが成功してから実行
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          # ダウンロードしたアーティファクトをリリース用に整理
+          ls -R artifacts
+          # 例: mv artifacts/x86_64-musl/your_app_name-x86_64-musl .
+          #     mv artifacts/aarch64-musl/your_app_name-aarch64-musl .
+          # リリースに含めたいファイルをカレントディレクトリに移動させる
+          find artifacts -type f -name 'your_app_name-*' -exec mv {} . \;
+
+
+      - name: Get tag name
+        id: get_tag
+        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_tag.outputs.TAG }}
+          name: Release ${{ steps.get_tag.outputs.TAG }}
+          draft: false
+          prerelease: false
+          files: |
+            your_app_name-x86_64-musl
+            your_app_name-aarch64-musl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

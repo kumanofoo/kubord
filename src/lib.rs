@@ -1,4 +1,4 @@
-//pub mod book;
+pub mod book;
 pub mod mqtt;
 use std::collections::HashMap;
 use clap::Parser;

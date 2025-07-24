@@ -1,0 +1,35 @@
+[package]
+name = "kubord"
+version = "0.1.1"
+edition = "2024"
+
+[[bin]]
+name = "rttmon"
+path = "src/bin/rtt_monitor.rs"
+
+[[bin]]
+name = "hbmon"
+path = "src/bin/mqtt_heartbeat_monitor.rs"
+
+[dependencies]
+paho-mqtt = "0.13"
+serenity = { version = "0.12", features = ["client", "gateway", "rustls_backend", "http"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1", features = ["v4"] }
+clap = { version = "4.5", features = ["derive"] }
+futures = "0.3"
+env_logger = "0.11"
+log = "0.4"
+reqwest = "0.12"
+openssl = { version = "0.10", features = ["vendored"] }
+scraper = "0.23"
+regex = "1"
+csv = "1"
+chrono = "0.4"
+
+[dev-dependencies]
+rand = "0.8"
+rand_distr = "0.4"
+tempfile = "3"

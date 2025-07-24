@@ -5,20 +5,17 @@ name: Rust Release
 on:
   push:
     branches:
-      - develop # developブランチへのpushでCIを実行
+      - develop
     tags:
-      - 'v*'    # vから始まるタグ（例: v1.0.0）でリリースを作成
+      - 'v[0-9]+.[0-9]+.[0-9]+'
 
 env:
-  # Cargo.tomlからプロジェクト名を取得し、環境変数に設定
-  # ワークフロー全体で一貫した名前を使えるようにするため
   PROJECT_NAME: $(grep -m 1 '^name =' Cargo.toml | sed 's/.*= *//' | tr -d '"')
 
 jobs:
-  # ビルドジョブ: 複数のアーキテクチャでバイナリをビルドする
   build:
     name: Build for ${{ matrix.target }}
-    runs-on: ubuntu-20.04 # glibc 2.31 が含まれる Ubuntu 20.04 を使用
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
@@ -28,20 +25,16 @@ jobs:
             arch: aarch64
 
     steps:
-      # 1. リポジトリのコードをチェックアウト
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Rustツールチェインとクロスコンパイル用の`cross`をセットアップ
-      # `cross`を使うことで、aarch64のクロスコンパイル設定が簡単になります
       - name: Install Rust toolchain with cross
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross --rev=3de12f30b
+        run: cargo install cross
 
-      # 3. Cargoの依存関係をキャッシュしてビルドを高速化
       - name: Cache cargo registry and index
         uses: actions/cache@v4
         with:
@@ -53,20 +46,13 @@ jobs:
             target/
           key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # 4. バイナリをビルド
-      # `cross`がターゲットに応じたコンテナを自動で使い、ビルドを実行します
       - name: Build binaries
         run: cross build --release --all-targets --target ${{ matrix.target }}
 
-      # 5. ビルドしたバイナリを1つのディレクトリにまとめる
-      # `jq`を使ってCargo.tomlからバイナリ名を動的に取得します
       - name: Package binaries
         run: |
-          # stagingディレクトリを作成
           mkdir staging
 
-          # Cargo.tomlから[[bin]]セクションで定義されたバイナリ名の一覧を取得
-          # 将来的にバイナリが増えても、このスクリプトは変更不要です
           BINS=$(cargo read-manifest --manifest-path Cargo.toml | jq -r '.targets[] | select(.kind[] | contains("bin")) | .name')
           
           for bin_name in $BINS; do
@@ -74,23 +60,16 @@ jobs:
             cp "target/${{ matrix.target }}/release/$bin_name" staging/
           done
 
-      # 6. アーカイブファイルを作成
-      # 例: my-project-v1.0.0-x86_64.tar.gz
       - name: Create archive
         run: |
           # developブランチの場合は"develop"、タグの場合はタグ名（例: v1.0.0）を取得
           REF_NAME=${{ github.ref_name }}
-          # アーカイブ名を定義
           ARCHIVE_NAME="${{ env.PROJECT_NAME }}-${REF_NAME}-${{ matrix.arch }}.tar.gz"
           
-          # stagingディレクトリの中身をtar.gzに固める
           tar -czvf "${ARCHIVE_NAME}" -C staging .
 
-          # 後続のステップで使えるようにファイル名を環境変数に設定
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
 
-      # 7. 成果物（tar.gz）をアップロード
-      # この成果物は後でリリースジョブで使います
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -101,25 +80,19 @@ jobs:
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: build # buildジョブが成功した後に実行
-    if: startsWith(github.ref, 'refs/tags/') # タグがプッシュされた時のみ実行
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
-      # 1. 各ビルドジョブがアップロードした成果物をダウンロード
       - name: Download all release assets
         uses: actions/download-artifact@v4
         with:
-          # すべての 'release-assets-*' をダウンロード
           pattern: release-assets-*
-          # アーキテクチャごとのサブディレクトリに展開
           path: release-assets
           merge-multiple: true # v4の機能。複数のArtifactを1つのディレクトリにまとめる
 
-      # 2. GitHub Releaseを作成し、成果物をアップロード
       - name: Create Release and upload assets
         uses: softprops/action-gh-release@v2
         with:
-          # リリースノートを自動生成する設定（オプション）
           generate_release_notes: true
-          # アップロードするファイル。全アーキテクチャのtar.gzファイルを指定
           files: release-assets/*.tar.gz

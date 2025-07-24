@@ -7,7 +7,7 @@ use serde::Deserialize;
 pub type GenericError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
 struct Args {
     #[arg(short = 'c', long = "config", default_value = "./config.json")]
     config_path: String,

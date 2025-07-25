@@ -23,9 +23,7 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            arch: x86_64
           - target: aarch64-unknown-linux-gnu
-            arch: aarch64
 
     steps:
       - name: Checkout repository
@@ -54,29 +52,30 @@ jobs:
 
       - name: Package binaries
         run: |
-          mkdir staging
+          PROJECT_ID="${{ env.PROJECT_NAME }}-${{ github.ref_name }}-${{ matrix.target }}"
+          echo "PROJECT_ID=${PROJECT_ID}" >> $GITHUB_ENV
+          mkdir "${PROJECT_ID}"
 
           BINS=$(cargo read-manifest --manifest-path Cargo.toml | jq -r '.targets[] | select(.kind[] | contains("bin")) | .name')
           
           for bin_name in $BINS; do
             echo "Packaging $bin_name..."
-            cp "target/${{ matrix.target }}/release/$bin_name" staging/
+            cp "target/${{ matrix.target }}/release/$bin_name" "${PROJECT_ID}/"
           done
 
       - name: Create archive
         run: |
           # developブランチの場合は"develop"、タグの場合はタグ名（例: v1.0.0）を取得
-          REF_NAME=${{ github.ref_name }}
-          ARCHIVE_NAME="${{ env.PROJECT_NAME }}-${REF_NAME}-${{ matrix.arch }}.tar.gz"
+          ARCHIVE_NAME="${{ env.PROJECT_ID }}.tar.gz"
           
-          tar -czvf "${ARCHIVE_NAME}" -C staging .
+          tar -czvf "${ARCHIVE_NAME}" "./${{ env.PROJECT_ID }}"
 
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-assets-${{ matrix.arch }}
+          name: release-assets-${{ matrix.target }}
           path: ${{ env.ARCHIVE_NAME }}
 
   # リリースジョブ: タグがプッシュされた場合のみ実行

@@ -178,6 +178,7 @@ fn test_append_and_load_and_statistics() {
         ping_interval_minutes: 6,
         anomaly_threshold_factor: 2.0,
         hosts: vec![host.to_string()],
+        device_id: None,
     };
     let data_file = config.data_filename(host);
 
@@ -377,6 +378,7 @@ fn test_create_report() {
         ping_interval_minutes: 6,
         anomaly_threshold_factor: 2.0,
         hosts: vec![localhost.to_string(), invalidhost.to_string()],
+        device_id: None,
     };
     let data_file = config.data_filename(localhost);
 
@@ -489,10 +491,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Put MQTT topic in global variable.
-    mqtt::initialize_global_topic(&mqtt_config.topics);
     // MQTT topic for ping.
-    let ping_topic = mqtt::topic("network.ping.report").unwrap().to_string();
+    let device_id = mqtt::get_device_id_or_command_name(&ping_config.device_id);
+    let ping_topic = mqtt::Topic::Monitor { device_id }.to_string();
     let mqtt_client = mqtt::connect_broker(&mqtt_config).await.unwrap();
     let publisher = mqtt::Publisher::new_from_client(mqtt_client.clone());
 
@@ -545,6 +546,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let regular_report_str = serde_json::to_string(&regular_report).unwrap();
+        info!("Topic: {}", ping_topic);
         info!("Report: {:?}", regular_report);
         publisher.publish(&ping_topic, &regular_report_str).await;
  

@@ -229,8 +229,7 @@ async fn main() -> Result<(), GenericError> {
     };
 
     // Initialize the MQTT client
-    mqtt::initialize_global_topic(&mqtt_config.topics);
-    let ping_topic = mqtt::topic("network.ping.report").unwrap().to_string();
+    let ping_topic = mqtt::Topic::Monitor { device_id: heartbeat_config.device_id }.to_string();
     let mqtt_client = mqtt::connect_broker(&mqtt_config).await?;
     let mut subscriber = mqtt::Subscriber::new_from_client(mqtt_client.clone(), qos.clone());
 

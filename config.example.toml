@@ -1,0 +1,28 @@
+[mqtt]
+broker = "tcp://localhost:1883"
+qos = [0]
+
+[discord]
+channel_id = ["1234567890123456789"]
+webhook = "https://discord.com/api/webhooks/1234567890123456789/aaabbbcccdddeeefffAAABBBCCCDDDEEEFFF01234567890123456789001234567890"
+command.lib = { category = "book", device_id = "librarian" }
+
+[book]
+#device_id = "librarian"
+# A systemid(e.g. Tokyo_NDL) and systemname(e.g. 国立国会図書館) of a library can be obtained from
+# 'https://api/calil.jp/library/appkey=XXXX[/pref=青森県[/city=青森市]]'.
+libraries = { Tokyo_NDL = "国立国会図書館", Tokyo_Pref = "東京都立図書館", Osaka_Pref = "大阪府立図書館" }
+
+[ping]
+#device_id = "rttmon"
+data_file_prefix = "rtt_data"
+history_duration_hours = 24
+ping_interval_minutes = 10
+anomaly_threshold_factor = 3
+hosts = ["localhost", "127.0.0.1"]
+
+[heartbeat]
+device_id = "rttmon"
+interval_seconds = 60
+timeout_minutes = 15
+snooze_alerts_interval_minutes = 30

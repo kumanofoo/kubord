@@ -1,22 +1,28 @@
 // MQTT Subscriber Implementation
 
-//! This module provides an MQTT subscriber that connects to a broker,
-//! subscribes to specified topics, and sends received messages to a channel
-//! for further processing.
+//! This module provides MQTT client utilities for subscribing and publishing messages.
+//! It includes types and functions for anomaly reporting, topic parsing, and message handling.
 //!
-//! ```rust
+//! Main features:
+//! - MQTT subscriber and publisher implementations
+//! - Anomaly reporting structures
+//! - Topic parsing and formatting utilities
+//! - Message types for inter-task communication
+//!
+//! # Example: MQTT Subscriber
+//! 
+//! ```no_run
 //! use tokio::sync::mpsc;
 //! use kubord::mqtt::{Subscriber, MQTTMessage};
 //! use kubord::MqttConfig;
 //! use tokio::task;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() {
 //!     // MQTT configuration
 //!     let config = MqttConfig {
 //!         broker: "tcp://localhost:1883".to_string(),
 //!         client_id: None,
-//!         topics: vec!["test/topic".to_string()],
 //!         qos: Some(vec![0]),
 //!     };
 //!
@@ -24,26 +30,46 @@
 //!     let (tx, mut rx) = mpsc::channel(32);
 //!
 //!     // Create subscriber
-//!     let mut subscriber = Subscriber::new(&config)?;
+//!     let mut subscriber = Subscriber::new(&config).await.unwrap();
 //!
 //!     // Run subscriber in a separate task
 //!     task::spawn(async move {
-//!         let _ = subscriber.run(tx).await;
+//!         let _ = subscriber.run(vec!["test/topic".to_string()], tx).await;
 //!     });
 //!
 //!     // Message receiving loop
 //!     while let Some(msg) = rx.recv().await {
 //!         println!("Received: topic={}, payload={}", msg.topic, msg.payload);
 //!     }
-//!     Ok(())
+//! }
+//! ```
+//! 
+//! # Example: MQTT Publisher
+//!
+//! ```no_run
+//! use kubord::mqtt::{Publisher};
+//! use kubord::MqttConfig;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     // MQTT configuration
+//!     let config = MqttConfig {
+//!         broker: "tcp://localhost:1883".to_string(),
+//!         client_id: None,
+//!         qos: Some(vec![0])
+//!     };
+//! 
+//!     // Create publisher
+//!     let publisher = Publisher::new(&config).await.unwrap();
+//! 
+//!     // Publish message
+//!     publisher.publish("test/topic", "Hello MQTT!").await;
 //! }
 //! ```
 
 use crate::{GenericError, MqttConfig};
 use paho_mqtt as mqtt;
 use std::time::Duration;
-use std::sync::OnceLock;
-use std::collections::HashMap;
 use std::fmt;
 use tokio::sync::mpsc::Sender;
 use log::{debug, info, warn, error};
@@ -51,6 +77,7 @@ use futures::stream::StreamExt;
 use serde::{Serialize, Deserialize};
 
 
+/// Represents the type of anomaly detected in network monitoring.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum AnomalyKind {
     AnomalyRtt(f64, f64), // RTT value and threshold
@@ -75,6 +102,7 @@ impl std::fmt::Display for AnomalyKind {
 }
 
 
+/// Contains information about a detected anomaly for a specific host and time.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct Anomaly {
     pub timestamp: i64, // Unix timestamp in milliseconds
@@ -97,6 +125,7 @@ impl fmt::Display for Anomaly {
 }
 
 
+/// Aggregates multiple anomalies detected at a specific timestamp.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AnomalyReport {
     pub timestamp: i64, // Unix timestamp in milliseconds
@@ -104,7 +133,6 @@ pub struct AnomalyReport {
 }
 
 impl AnomalyReport {
-    pub const MQTT_TOPIC: &str = "message/anomaly/report/rtt";
     pub fn new() -> Self {
         AnomalyReport {
             timestamp: chrono::Utc::now().timestamp_millis(),
@@ -127,23 +155,141 @@ impl std::fmt::Display for AnomalyReport {
     }
 }
 
-const PUB_CLIENT_ID_PREFIX: &str = "mqtt-pub-";
-const SUB_CLIENT_ID_PREFIX: &str = "mqtt-sub-";
+const PUB_CLIENT_ID_PREFIX: &str = "mqtt-pub";
+const SUB_CLIENT_ID_PREFIX: &str = "mqtt-sub";
 
-pub static TOPICS: OnceLock<HashMap<String, String>> = OnceLock::new();
-pub fn initialize_global_topic(topics: &HashMap<String, String>) {
-    TOPICS.set(topics.clone()).unwrap();
-}
-pub fn topic(key: &str) -> Option<String> {
-    Some(TOPICS.get()?.get(key)?.clone())
+/// Errors that can occur when parsing MQTT topic strings.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ParseTopicError {
+    UnknownPrefix,
+    InvalidFormat,
 }
 
+impl std::fmt::Display for ParseTopicError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseTopicError::UnknownPrefix => write!(f, "Unknown topic prefix"),
+            ParseTopicError::InvalidFormat => write!(f, "Invalid topic format"),
+        }
+    }
+}
+
+impl std::error::Error for ParseTopicError {}
+
+/// Represents MQTT topic formats used in the application.
+///
+/// - `Command`: Used to send commands to a device (e.g., turning a light on/off).
+/// - `Response`: Used to send responses to a command (e.g., device returns its status).
+/// - `Sensor`: Used to periodically publish sensor measurement results (e.g., temperature readings).
+/// - `Monitor`: Used to monitor and publish the status of a device or system (e.g., network health).
+pub enum Topic {
+    /// Topic for sending commands to a device.
+    /// Example: Used to instruct a lighting device to turn on or off.
+    Command { device_id: String, session_id: String },
+
+    /// Topic for sending responses to a command.
+    /// Example: Used by a device to reply with its status after receiving a command.
+    Response { device_id: String, session_id: String },
+
+    /// Topic for publishing periodic sensor measurement results.
+    /// Example: Used by a temperature sensor to publish readings every 10 minutes.
+    Sensor { location: String, device_id: String },
+
+    /// Topic for monitoring and publishing the status of a device or system.
+    /// Example: Used to publish network status or alerts when an abnormal condition is detected.
+    Monitor { device_id: String },
+}
+
+impl Topic {
+    const COMMANDS: [&str; 4] = ["command", "response", "sensor", "monitor"];
+    pub const ANY: &str = "+";
+    pub fn all_command() -> Self {
+        Topic::Command {
+            device_id: "+".to_string(),
+            session_id: "#".to_string(),
+        }
+    }
+    pub fn all_response() -> Self {
+        Topic::Response {
+            device_id: "+".to_string(),
+            session_id: "#".to_string(),
+        }
+    }
+    pub fn all_sensor() -> Self {
+        Topic::Sensor {
+            location: "+".to_string(),
+            device_id: "#".to_string(),
+        }
+    }
+    pub fn all_monitor() -> Self {
+        Topic::Monitor {
+            device_id: "+".to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for Topic {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Topic::Command { device_id, session_id } =>
+                write!(f, "command/{}/{}", device_id, session_id),
+            Topic::Response { device_id, session_id } =>
+                write!(f, "response/{}/{}", device_id, session_id),
+            Topic::Sensor { location, device_id } =>
+                write!(f, "sensor/{}/{}", location, device_id),
+            Topic::Monitor { device_id } =>
+                write!(f, "monitor/{}", device_id),
+        }
+    }
+}
+
+impl std::str::FromStr for Topic {
+    type Err = ParseTopicError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split('/').collect();
+        match parts.as_slice() {
+            ["command", device_id, session_id] =>
+                Ok(Topic::Command {device_id: device_id.to_string(), session_id: session_id.to_string()}),
+            ["response", device_id, session_id] =>
+                Ok(Topic::Response {device_id: device_id.to_string(), session_id: session_id.to_string()}),
+            ["sensor", location, device_id] =>
+                Ok(Topic::Sensor {
+                    location: location.to_string(),
+                    device_id: device_id.to_string()
+                }),
+            ["status", device_id] =>
+                Ok(Topic::Monitor {
+                    device_id: device_id.to_string()
+                }),
+            //[prefix, ..] if *prefix != "command" && *prefix != "response" && *prefix != "sensor" && *prefix != "monitor" =>
+            [prefix, ..] if !Topic::COMMANDS.contains(prefix) =>
+                Err(ParseTopicError::UnknownPrefix),
+            _ => Err(ParseTopicError::InvalidFormat),
+        }
+    }
+}
+
+pub fn get_device_id_or_command_name(device_id: &Option<String>) -> String {
+    match device_id {
+        Some(id) => id.to_string(),
+        None => {
+            let command_path = std::env::args().next().unwrap();
+            std::path::Path::new(&command_path).file_name().unwrap().to_str().unwrap().to_string()
+        }
+    }
+}
+
+/// Represents a received MQTT message with topic and payload.
 #[derive(Debug, Clone)]
 pub struct MQTTMessage {
     pub topic: String,
     pub payload: String,
 }
 
+/// Connects to the MQTT broker using the provided configuration.
+/// Returns an asynchronous MQTT client on success.
 pub async fn connect_broker(config: &MqttConfig) -> Result<mqtt::AsyncClient, GenericError> {
     let client_id = match &config.client_id {
         Some(id) => id,
@@ -172,12 +318,14 @@ pub async fn connect_broker(config: &MqttConfig) -> Result<mqtt::AsyncClient, Ge
     Ok(client)
 }
 
+/// MQTT subscriber for receiving messages from specified topics.
 pub struct Subscriber {
     pub qos: Vec<i32>,
     client: mqtt::AsyncClient,
 }
 
 impl Subscriber {
+    /// Creates a new MQTT subscriber and connects to the broker.
     pub async fn new(config: &MqttConfig) -> Result<Self, GenericError> {
         let client_id = match &config.client_id {
             Some(id) => id,
@@ -222,6 +370,7 @@ impl Subscriber {
         }
     }
 
+    /// Runs the subscriber, listening to topics and forwarding messages to the provided channel.
     pub async fn run(&mut self, topics: Vec<String>, tx: Sender<MQTTMessage>) -> Result<(), GenericError> {
         let mut strm = self.client.get_stream(32);
         self.client.subscribe_many(&topics, &self.qos);
@@ -246,11 +395,13 @@ impl Subscriber {
     }
 }
 
+/// MQTT publisher for sending messages to specified topics.
 pub struct Publisher {
     client: mqtt::AsyncClient,
 }
 
 impl Publisher {
+    /// Creates a new MQTT publisher and connects to the broker.
     pub async fn new(config: &MqttConfig) -> Result<Self, GenericError> {
         let client_id = match &config.client_id {
             Some(id) => id,
@@ -263,7 +414,6 @@ impl Publisher {
         
         info!("Using broker: {}", config.broker);
         info!("Using client ID: {}", client_id);
-        info!("Using topics: {:?}", config.topics);
         info!("Using QoS: {:?}", qos);
 
         // Create the MQTT client with the specified options.
@@ -296,6 +446,7 @@ impl Publisher {
         }
     }
 
+    /// Publishes a message to the specified topic.
     pub async fn publish(&self, topic: &str, payload: &str) {
         let msg = mqtt::Message::new(topic, payload.as_bytes(), 0);
         debug!("topic: {}, payload: {}", msg.topic(), std::str::from_utf8(msg.payload()).unwrap());

@@ -1,8 +1,7 @@
 use log::{debug, info, warn};
-use serde::{Deserialize};
 use std::collections::HashMap;
 use tokio::time::{sleep, Duration};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::GenericError;
 
@@ -19,7 +18,7 @@ impl BookInfo {
     /// Creates a new `BookInfo` instance, normalizing the provided ISBN.
     ///
     /// This constructor attempts to normalize the `isbn` string by removing hyphens
-    /// and validating its format.
+    /// and validating its format. Only digits and 'x'/'X' are allowed (hyphens are ignored).
     ///
     /// # Arguments
     ///
@@ -35,9 +34,10 @@ impl BookInfo {
     /// # Errors
     ///
     /// Returns an `Err` message if the `isbn` string is:
-    /// - Not ASCII.
-    /// - Of an invalid length (less than 10 or greater than 13 characters after normalization).
-    /// - Contains invalid characters (e.g., non-digits in the prefix, or an invalid last character).
+    /// - Contains invalid characters (only digits, 'x'/'X', and hyphens are allowed).
+    /// - After normalization, is not exactly 10 or 13 characters.
+    /// - For ISBN-13, contains non-digit characters.
+    /// - Fails checksum validation for ISBN-10 or ISBN-13.
     pub fn new(title: &str, isbn: &str) -> Result<BookInfo, String> {
         let norm_isbn = normalize_isbn(isbn)?;
         Ok(BookInfo {
@@ -47,91 +47,125 @@ impl BookInfo {
     }
 }
 
-/// Normalize ISBN string by removing hyphens and validating the format.
+/// Normalizes and validates an ISBN string.
 ///
-/// This function takes a raw ISBN string, removes any hyphens, and then
-/// performs basic validation checks on its length and character content.
+/// This function removes hyphens and spaces from the input string, then checks if the result
+/// is a valid ISBN-10 or ISBN-13. It performs checksum validation for both formats.
+/// Only digits and 'x'/'X' are allowed; spaces and other characters are not permitted.
+/// 
 ///
 /// # Arguments
 ///
-/// * `isbn_str` - The ISBN string to normalize. This can be either ISBN-10 or ISBN-13
-///   and may contain hyphens.
+/// * `s` - The ISBN string to normalize. May contain hyphens, spaces, and be either ISBN-10 or ISBN-13.
 ///
 /// # Returns
 ///
-/// Returns `Ok(String)` containing the normalized ISBN string (without hyphens)
-/// if the input is valid. Returns `Err(String)` with an error message if the
-/// ISBN format is invalid.
+/// Returns `Ok(String)` containing the normalized ISBN (digits and possibly 'x' or 'X' for ISBN-10).
+/// Returns `Err(&'static str)` if the input is not a valid ISBN-10 or ISBN-13, or fails checksum validation.
 ///
 /// # Errors
 ///
-/// Returns an `Err` message if the `isbn_str` is:
-/// - Not entirely composed of ASCII characters.
-/// - Of an invalid length (after removing hyphens, must be between 10 and 13 inclusive).
-/// - Contains non-digit characters in its prefix (all characters except the last one).
-/// - Has an invalid last character (must be a digit, 'x', or 'X').
-pub fn normalize_isbn(isbn_str: &str) -> Result<String, String> {
-    let mut norm = isbn_str.to_string();
-    norm.retain(|c| c != '-');
-
-    if !norm.is_ascii() {
-        return Err(format!("Not ascii code"));
+/// Returns an error if:
+/// - The normalized string is not 10 or 13 characters long.
+/// - The string contains invalid characters.
+/// - For ISBN-13, contains non-digit characters.
+/// - The checksum does not match for ISBN-10 or ISBN-13.
+pub fn normalize_isbn(s: &str) -> Result<String, &'static str> {
+    // Check invalid characters
+    let invalid_char: String = s.chars().filter(|c| !c.is_digit(10) && *c != 'x' && *c != 'X' && *c != '-').collect();
+    if invalid_char.len() > 0 {
+        return Err("Invalid characters in ISBN.");
     }
 
-    let norm_length = norm.len();
-    if norm_length < 10 || norm_length > 13 {
-        return Err(format!("Invalid legth of string"));
+    // Remove hyphen and space
+    let cleaned_isbn: String = s.chars().filter(|c| c.is_digit(10) || *c == 'x' || *c == 'X').collect();
+
+    match cleaned_isbn.len() {
+        10 => {
+            if !is_valid_isbn10(&cleaned_isbn) {
+                return Err("Invalid ISBN-10 checksum.");
+            }
+        },
+        13 => {
+            if cleaned_isbn.chars().any(|c| !c.is_digit(10)) {
+                return Err("Invalid characters in ISBN-13. Must be digits only.");
+            }
+            if !is_valid_isbn13(&cleaned_isbn) {
+                return Err("Invalid ISBN-13 checksum.");
+            }
+        },
+        _ => {
+            return Err("Invalid ISBN length. Must be 10 or 13 digits.");
+        }
     }
 
-    if let Err(_) = norm.as_str()[0..norm_length - 1].parse::<u64>() {
-        return Err(format!("Invalid charactor(prefix)"));
-    }
+    Ok(cleaned_isbn.to_string())
+}
 
-    // last charcter is 'x' or 'X' or a digit.
-    let is_valid_char = match isbn_str.chars().last() {
-        Some('x') => true,
-        Some('X') => true,
-        Some(c) => c.is_ascii_digit(),
-        None => false,
-    };
-    if !is_valid_char {
-        return Err(format!("Invalid charactor(suffix)"));
+fn is_valid_isbn10(isbn: &str) -> bool {
+    let mut sum = 0;
+    for (i, c) in isbn.chars().enumerate() {
+        if i < 9 {
+            let digit = c.to_digit(10).unwrap() as i32;
+            sum += digit * (10 - i as i32);
+        } else {
+            let check_digit = if c.is_digit(10) {
+                c.to_digit(10).unwrap() as i32
+            } else if c.to_ascii_lowercase() == 'x' {
+                10
+            } else {
+                return false;
+            };
+            sum += check_digit;
+        }
     }
+    sum % 11 == 0
+}
 
-    return Ok(norm);
+fn is_valid_isbn13(isbn: &str) -> bool {
+    let mut sum = 0;
+    for (i, c) in isbn.chars().enumerate() {
+        let digit = c.to_digit(10).unwrap() as i32;
+        if i % 2 == 0 {
+            sum += digit;
+        } else {
+            sum += digit * 3;
+        }
+    }
+    sum % 10 == 0
 }
 
 #[test]
+/// Tests for normalize_isbn:
+/// - Empty, too short, too long, invalid characters, valid ISBN-10/13, hyphen variations, invalid ISBN-13 with 'x'
 fn test_normalize_isbn() {
     let length_zero = "";
     assert!(normalize_isbn(length_zero).is_err());
 
-    let length_short = "12345";
+    let length_short = "123456789";
     assert!(normalize_isbn(length_short).is_err());
 
     let length_long = "12345678901234";
     assert!(normalize_isbn(length_long).is_err());
 
-    let invalid_character = "abc1234567890";
+    let invalid_character = "abc123456789X";
     assert!(normalize_isbn(invalid_character).is_err());
 
-    let isdn10 = "1234567890";
+    let isdn10 = "123456789X";
     assert!(normalize_isbn(isdn10).is_ok());
 
-    let isdn10_with_hyphen = "4-567890-12-3";
+    let isdn10_with_hyphen = "1-234567-89-X";
     assert!(normalize_isbn(isdn10_with_hyphen).is_ok());
 
-    let isdn13 = "1234567890123";
+    let isdn13 = "1234567890128";
     assert!(normalize_isbn(isdn13).is_ok());
 
-    let isdn13_with_hyphen = "123-4-567890-12-3";
+    let isdn13_with_hyphen = "123-4-567890-12-8";
     assert!(normalize_isbn(isdn13_with_hyphen).is_ok());
 
-    let isdn13_with_x = "123456789012x";
-    assert!(normalize_isbn(isdn13_with_x).is_ok());
+    let isdn13_with_x = "123456789010x";
+    assert!(normalize_isbn(isdn13_with_x).is_err());
 
-    let isdn13_with_large_x = "123456789012X";
-    assert!(normalize_isbn(isdn13_with_large_x).is_ok());
 }
 
 /// Searches for books by title using the CiNii Books API.
@@ -159,20 +193,32 @@ fn test_normalize_isbn() {
 /// # Examples
 ///
 /// ```no_run
-/// let title = "アルゴリズム";
-/// let books = search_book_c(title).await?;
-/// for book in books {
-///     println!("Title: {}, ISBN: {}", book.title, book.isbn);
-/// }
+/// # #[tokio::main]
+/// # async fn main() {
+///     use kubord::book::search_book_c;
+///
+///     let title = "The UNIX Philosophy";
+///     let books = search_book_c(title).await.unwrap();
+///     for book in books {
+///         assert_eq!(book.title, "The UNIX Philosophy"); 
+///         assert_eq!(book.isbn, "9781555581237");
+///     }
+/// # }
 /// ```
 pub async fn search_book_c(title: &str) -> Result<Vec<BookInfo>, GenericError> {
     let host = "https://ci.nii.ac.jp";
-    let api = "/books/search?advanced=true&count=20&sortorder=1&type=1&title_exact=true&update_keep=true&title=";
+
+    let (api, is_isbn) = if normalize_isbn(title).is_ok() {
+        info!("search ISBN: {}", title);
+        ("/books/search?advanced=true&count=20&sortorder=1&type=1&&update_keep=true&isbn=", true)
+    } else {
+        info!("search Title: {}", title);
+        ("/books/search?advanced=true&count=20&sortorder=1&type=1&update_keep=true&title=", false)
+    };
     let search_url = format!("{}{}{}", host, api, title);
 
     let body = reqwest::get(search_url).await?.text().await?;
-    debug!("body: {}", body);
-
+    
     let selector = scraper::Selector::parse("dt.item_mainTitle a").unwrap();
     let document = scraper::Html::parse_document(&body);
     let titles = document.select(&selector);
@@ -180,14 +226,13 @@ pub async fn search_book_c(title: &str) -> Result<Vec<BookInfo>, GenericError> {
     let mut result = Vec::new();
     for t in titles {
         let book_title = t.text().collect::<String>();
-        if !book_title.starts_with(title) {
-            debug!("{} is not {}", book_title, title);
+        if !is_isbn && !book_title.starts_with(title) {
+            info!("{} is not {}", book_title, title);
             continue;
         }
         let book_url = t.value().attr("href").unwrap();
         let search_url = format!("{}{}", host, book_url);
         let body = reqwest::get(search_url).await?.text().await?;
-        debug!("body: {}", body);
         let selector = scraper::Selector::parse("li.isbn li").unwrap();
         let document = scraper::Html::parse_document(&body);
         let isbns = document.select(&selector);
@@ -199,6 +244,7 @@ pub async fn search_book_c(title: &str) -> Result<Vec<BookInfo>, GenericError> {
         }
     }
 
+    info!("title: {}, result c: {:?}", title, result);
     Ok(result)
 }
 
@@ -237,10 +283,16 @@ async fn test_search_book_c() {
 /// # Examples
 ///
 /// ```no_run
-/// let title = "アルゴリズム";
-/// let books = search_book_k(title).await?;
-/// for book in books {
-///     println!("Title: {}, ISBN: {}", book.title, book.isbn);
+/// #[tokio::main]
+/// async fn main() {
+///     use kubord::book::search_book_k;
+///
+///     let title = "The UNIX Philosophy";
+///     let books = search_book_k(title).await.unwrap();
+///     for book in books {
+///         assert_eq!(book.title, "The UNIX Philosophy"); 
+///         assert_eq!(book.isbn, "9781555581237"); 
+///     }
 /// }
 /// ```
 pub async fn search_book_k(title: &str) -> Result<Vec<BookInfo>, GenericError> {
@@ -259,7 +311,7 @@ pub async fn search_book_k(title: &str) -> Result<Vec<BookInfo>, GenericError> {
     for t in titles {
         let book_title = t.text().collect::<String>();
         if !book_title.starts_with(title) {
-            println!("{} is not {}", book_title, title);
+            debug!("{} is not {}", book_title, title);
             continue;
         }
         let book_url = t.value().attr("href").unwrap();
@@ -276,6 +328,7 @@ pub async fn search_book_k(title: &str) -> Result<Vec<BookInfo>, GenericError> {
         }
     }
 
+    info!("title: {}, result k: {:?}", title, result);
     Ok(result)
 }
 
@@ -454,15 +507,20 @@ pub struct LibraryDetails {
 /// # Examples
 ///
 /// ```no_run
-/// let appkey = "YOUR_CALIL_API_KEY"; // Replace with your actual key
-/// let isbns = vec!["9784756102133".to_string()];
-/// let libraries = vec!["Tokyo_NDL".to_string(), "Tokyo_Pref".to_string()];
+/// #[tokio::main]
+/// async fn main() {
+///     use kubord::book::query_book_status;
 ///
-/// let book_status = query_book_status(appkey, &isbns, &libraries).await?;
-/// for (isbn, system_details) in book_status {
-///     println!("ISBN: {}", isbn);
-///     for (system_id, details) in system_details {
-///         println!("  Library {}: Status {:?}", system_id, details.status);
+///     let appkey = "YOUR_CALIL_API_KEY"; // Replace with your actual key
+///     let isbns = vec!["9784756102133".to_string()];
+///     let libraries = vec!["Tokyo_NDL".to_string(), "Tokyo_Pref".to_string()];
+///
+///     let book_status = query_book_status(appkey, &isbns, &libraries).await.unwrap();
+///     for (isbn, system_details) in book_status {
+///         println!("ISBN: {}", isbn);
+///         for (system_id, details) in system_details {
+///             println!("  Library {}: Status {:?}", system_id, details.status);
+///         }
 ///     }
 /// }
 /// ```
@@ -642,8 +700,8 @@ impl BookDb {
     ///
     /// ```no_run
     /// # use std::collections::HashMap;
-    /// # use crate::BookDb;
-    /// # use crate::GenericError;
+    /// # use kubord::book::BookDb;
+    /// # use kubord::GenericError;
     /// # async fn run() -> Result<(), GenericError> {
     /// let appkey = "YOUR_CALIL_API_KEY";
     /// let mut libraries = HashMap::new();
@@ -751,7 +809,7 @@ impl BookDb {
         };
         for (isbn, systemids) in &self.status {
             let mut book_info = match self.book_title(&isbn) {
-                Ok(title) => BookJson::new(&title),
+                Ok(title) => BookJson::new(&title, &isbn),
                 Err(why) => {
                     warn!("{}", why);
                     continue;
@@ -780,6 +838,7 @@ impl BookDb {
 /// [
 ///   {
 ///     "book_title": "退屈なことはPythonにやらせよう : ノンプログラマーにもできる自動化処理プログラミング",
+///     "isbn": "9784873117782",
 ///     "libraries": {
 ///       "国立国会図書館": {
 ///         "status": "OK",
@@ -807,6 +866,7 @@ impl BookDb {
 ///   },
 ///   {
 ///     "book_title": "退屈なことはPythonにやらせよう : ノンプログラマーにもできる自動化処理プログラミング",
+///     "isbn": "9784873119274",
 ///     "libraries": {
 ///       "東京都立図書館": {
 ///         "status": "OK",
@@ -836,6 +896,7 @@ impl BookDb {
 #[derive(Deserialize, Serialize, Debug)]
 pub struct BookJson {
     pub book_title: String,
+    pub isbn: String,
     pub libraries: HashMap<LibraryName, LibraryDetails>,
 }
 
@@ -849,9 +910,10 @@ impl BookJson {
     /// # Returns
     ///
     /// A new `BookJson` instance.
-    pub fn new(title: &str) -> BookJson {
+    pub fn new(title: &str, isbn: &str) -> BookJson {
         BookJson {
             book_title: title.to_string(),
+            isbn: isbn.to_string(),
             libraries: HashMap::new(),
         }
     }

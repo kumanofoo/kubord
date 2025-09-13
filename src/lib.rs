@@ -39,7 +39,6 @@
 
 pub mod book;
 pub mod mqtt;
-pub mod commands;
 use std::collections::HashMap;
 use clap::Parser;
 use serde::Deserialize;

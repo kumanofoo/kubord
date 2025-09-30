@@ -11,6 +11,13 @@ path = "src/bin/rtt_monitor.rs"
 name = "hbmon"
 path = "src/bin/mqtt_heartbeat_monitor.rs"
 
+[[bin]]
+name = "discordgw"
+path = "src/bin/discord-gateway.rs"
+
+[[bin]]
+name = "librarian"
+
 [dependencies]
 paho-mqtt = "0.13"
 serenity = { version = "0.12", features = ["client", "gateway", "rustls_backend", "http"] }

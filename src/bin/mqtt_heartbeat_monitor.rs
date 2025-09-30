@@ -198,14 +198,14 @@ async fn main() -> Result<(), GenericError> {
     let config = match kubord::load_config() {
         Ok(config) => config,
         Err(why) => {
-            eprintln!("Configuration file not found: {:?}", why);
+            error!("Configuration file not found: {:?}", why);
             std::process::exit(1);
         }
     };
     let mqtt_config = match config.mqtt {
         Some(mqtt) => mqtt,
         None => {
-            eprintln!("'mqtt' key not found in config.");
+            error!("'mqtt' key not found in config.");
             std::process::exit(1);
         }
     };
@@ -216,14 +216,14 @@ async fn main() -> Result<(), GenericError> {
     let discord_config = match config.discord {
         Some(discord) => discord,
         None => {
-            eprintln!("'discord' key not found in config.");
+            error!("'discord' key not found in config.");
             std::process::exit(1);
         }
     };
     let heartbeat_config = match config.heartbeat {
         Some(heartbeat) => heartbeat,
         None => {
-            eprintln!("'heartbeat' key not found in config.");
+            error!("'heartbeat' key not found in config.");
             std::process::exit(1);
         }
     };

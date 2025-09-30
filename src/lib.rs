@@ -47,6 +47,11 @@ use serde::Deserialize;
 /// Generic error type used throughout the crate.
 pub type GenericError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
+pub fn progname() -> String {
+    let command_path = std::env::args().next().unwrap();
+    std::path::Path::new(&command_path).file_name().unwrap().to_str().unwrap().to_string()
+}
+
 /// Command-line arguments for configuration file path.
 #[derive(Parser)]
 #[command(version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
@@ -89,16 +94,8 @@ impl MqttConfig {
     }
 }
 
-/// Discord command parameter for device and category.
-#[derive(Debug, Deserialize, Clone)]
-pub struct DiscordCommandParameter {
-    /// Command category (e.g., "book").
-    pub category: String,
-    /// Device ID for the command.
-    pub device_id: String,
-}
-
 type CommandName = String;
+type ServiceName = String;
 
 /// Discord webhook and command configuration.
 #[derive(Debug, Deserialize, Clone)]
@@ -108,14 +105,14 @@ pub struct DiscordConfig {
     /// List of Discord channel IDs.
     pub channel_id: Vec<String>,
     /// Command definitions mapped by name.
-    pub commands: HashMap<CommandName, DiscordCommandParameter>,
+    pub commands: HashMap<CommandName, ServiceName>,
 }
 
 /// Book search configuration.
 #[derive(Debug, Deserialize)]
 pub struct BookConfig {
-    /// Optional device ID for book search.
-    pub device_id: Option<String>,
+    /// Optional service name for book search.
+    pub service: Option<String>,
     /// Map of library system IDs to human-readable names.
     pub libraries: HashMap<String, String>,
 }
@@ -171,6 +168,26 @@ pub fn load_config() -> Result<Config, GenericError> {
     let args = Args::parse();
     
     let config_str = std::fs::read_to_string(&args.config_path)?;
+    let config = toml::from_str(&config_str)?;
+    Ok(config)
+}
+
+ /// Loads the application configuration from the specified TOML file.
+ ///
+ /// # Arguments
+ /// * `filename` - The name of the TOML configuration file to load.
+ ///
+ /// # Returns
+ /// Returns `Ok(Config)` if the configuration is loaded and parsed successfully.
+ /// Returns `Err(GenericError)` if the file cannot be read or parsed.
+ ///
+ /// # Example
+ /// ```no_run
+ /// let config = kubord::load_config_with_filename("my_config.toml").unwrap();
+ /// ```
+pub fn load_config_with_filename(filename: &str) -> Result<Config, GenericError> {
+    let config_path = std::path::Path::new(filename);
+    let config_str = std::fs::read_to_string(config_path)?;
     let config = toml::from_str(&config_str)?;
     Ok(config)
 }

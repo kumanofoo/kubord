@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use csv::{ReaderBuilder, WriterBuilder};
-use kubord::{mqtt, PingConfig};
+use kubord::{mqtt, PingConfig, progname};
 use log::{error, info, warn};
 use regex::Regex;
 use std::process::Command;
@@ -492,7 +492,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // MQTT topic for ping.
-    let device_id = mqtt::get_device_id_or_command_name(&ping_config.device_id);
+    let device_id = match &ping_config.device_id {
+        Some(device_id) => device_id.clone(),
+        None => progname(),
+    };
     let ping_topic = mqtt::Topic::Monitor { device_id }.to_string();
     let mqtt_client = mqtt::connect_broker(&mqtt_config).await.unwrap();
     let publisher = mqtt::Publisher::new_from_client(mqtt_client.clone());

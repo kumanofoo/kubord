@@ -183,13 +183,13 @@ impl std::error::Error for ParseTopicError {}
 /// - `Sensor`: Used to periodically publish sensor measurement results (e.g., temperature readings).
 /// - `Monitor`: Used to monitor and publish the status of a device or system (e.g., network health).
 pub enum Topic {
-    /// Topic for sending commands to a device.
+    /// Topic for sending commands or requests to a device or server.
     /// Example: Used to instruct a lighting device to turn on or off.
-    Command { device_id: String, session_id: String },
+    Command { service: String, session_id: String },
 
-    /// Topic for sending responses to a command.
+    /// Topic for sending responses to a command or requests.
     /// Example: Used by a device to reply with its status after receiving a command.
-    Response { device_id: String, session_id: String },
+    Response { service: String, session_id: String },
 
     /// Topic for publishing periodic sensor measurement results.
     /// Example: Used by a temperature sensor to publish readings every 10 minutes.
@@ -205,13 +205,13 @@ impl Topic {
     pub const ANY: &str = "+";
     pub fn all_command() -> Self {
         Topic::Command {
-            device_id: "+".to_string(),
+            service: "+".to_string(),
             session_id: "#".to_string(),
         }
     }
     pub fn all_response() -> Self {
         Topic::Response {
-            device_id: "+".to_string(),
+            service: "+".to_string(),
             session_id: "#".to_string(),
         }
     }
@@ -231,10 +231,10 @@ impl Topic {
 impl std::fmt::Display for Topic {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Topic::Command { device_id, session_id } =>
-                write!(f, "command/{}/{}", device_id, session_id),
-            Topic::Response { device_id, session_id } =>
-                write!(f, "response/{}/{}", device_id, session_id),
+            Topic::Command { service, session_id } =>
+                write!(f, "command/{}/{}", service, session_id),
+            Topic::Response { service, session_id } =>
+                write!(f, "response/{}/{}", service, session_id),
             Topic::Sensor { location, device_id } =>
                 write!(f, "sensor/{}/{}", location, device_id),
             Topic::Monitor { device_id } =>
@@ -250,10 +250,10 @@ impl std::str::FromStr for Topic {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = s.split('/').collect();
         match parts.as_slice() {
-            ["command", device_id, session_id] =>
-                Ok(Topic::Command {device_id: device_id.to_string(), session_id: session_id.to_string()}),
-            ["response", device_id, session_id] =>
-                Ok(Topic::Response {device_id: device_id.to_string(), session_id: session_id.to_string()}),
+            ["command", service, session_id] =>
+                Ok(Topic::Command {service: service.to_string(), session_id: session_id.to_string()}),
+            ["response", service, session_id] =>
+                Ok(Topic::Response {service: service.to_string(), session_id: session_id.to_string()}),
             ["sensor", location, device_id] =>
                 Ok(Topic::Sensor {
                     location: location.to_string(),
@@ -267,16 +267,6 @@ impl std::str::FromStr for Topic {
             [prefix, ..] if !Topic::COMMANDS.contains(prefix) =>
                 Err(ParseTopicError::UnknownPrefix),
             _ => Err(ParseTopicError::InvalidFormat),
-        }
-    }
-}
-
-pub fn get_device_id_or_command_name(device_id: &Option<String>) -> String {
-    match device_id {
-        Some(id) => id.to_string(),
-        None => {
-            let command_path = std::env::args().next().unwrap();
-            std::path::Path::new(&command_path).file_name().unwrap().to_str().unwrap().to_string()
         }
     }
 }

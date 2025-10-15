@@ -226,7 +226,15 @@ async fn main() {
     env_logger::init();
     
     let args = Args::parse();
-    let config = std::sync::Arc::new(kubord::load_config_with_filename(&args.config_path).unwrap());
+    let config = std::sync::Arc::new(
+        match kubord::load_config_with_filename(&args.config_path) {
+            Ok(config) => config,
+            Err(why) => {
+                error!("Configration file error: {}", why);
+                std::process::exit(1);
+            }
+        }
+    );
 
     if args.list {
         if let Some(discord) = &config.discord {

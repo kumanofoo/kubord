@@ -69,7 +69,7 @@ async fn main() -> Result<(), GenericError> {
     let config = match kubord::load_config() {
         Ok(config) =>  config,
         Err(why) => {
-            eprintln!("Configration file not found: {}", why);
+            error!("Configration file error: {}", why);
             std::process::exit(1);
         }
     };
@@ -82,14 +82,14 @@ async fn main() -> Result<(), GenericError> {
             (book.libraries.clone(), service)
         },
         None => {
-            eprintln!("'Book' key not found in config.");
+            error!("'Book' key not found in config.");
             std::process::exit(1);
         }
     };
     let mqtt_config = match config.mqtt {
         Some(mqtt) => mqtt,
         None => {
-            eprintln!("'mqtt' key not found in config.");
+            error!("'mqtt' key not found in config.");
             std::process::exit(1);
         }
     };

@@ -21,7 +21,7 @@ use tokio::sync::mpsc::{channel, Sender};
 use tokio::time::{sleep, Duration};
 use std::sync::{RwLock, LazyLock};
 use std::collections::HashMap;
-use kubord::mqtt::{Subscriber, Publisher, MQTTMessage, Topic};
+use kubord::mqtt::{Subscriber, Publisher, MQTTMessage, Topic, TopicBool};
 use kubord::{DiscordConfig, GenericError};
 use kubord::commands;
 use clap::Parser;
@@ -37,11 +37,15 @@ impl Session {
     }
 
     fn get(session_id: &str) -> Option<(Context, CommandInteraction)> {
+        SESSION.read().unwrap().get(session_id).cloned()
+    }
+
+    fn get_and_remove(session_id: &str) -> Option<(Context, CommandInteraction)> {
         let mut session = SESSION.write().unwrap();
         session.remove(session_id)
     }
 
-    async fn set_timer(session_id: &str) -> Result<String, ()> {
+    async fn set_timer(session_id: &str, duration: u64) -> Result<String, ()> {
         if SESSION.read().unwrap().get(session_id).is_none() {
             return Err(());
         }
@@ -49,7 +53,7 @@ impl Session {
         let cloned_session_id = session_id.to_string();
         info!("Session timer start: {}", session_id);
         tokio::spawn( async move {
-            sleep(Duration::from_secs(120)).await;
+            sleep(Duration::from_secs(duration)).await;
             let mut session = SESSION.write().unwrap();
             if let Some((_, cmd)) = session.remove(&cloned_session_id) {
                 info!("Session {} timed out. Command: {}",
@@ -94,11 +98,19 @@ impl MqttBot {
         let _ = client.start().await;
     }
 
-    async fn send_folloup(
+    async fn send_followup(
         ctx: &Context, msg: &CommandInteraction,
         content: CreateInteractionResponseFollowup
     ) -> Result<(), GenericError> {
         msg.create_followup(&ctx.http, content).await?;
+        Ok(())
+    }
+    
+    async fn send(
+        ctx: &Context, msg: &CommandInteraction,
+        content: CreateMessage
+    ) -> Result<(), GenericError> {
+        msg.channel_id.send_message(&ctx.http, content).await?;
         Ok(())
     }
 }
@@ -161,8 +173,26 @@ impl EventHandler for Handler {
                         service: service.to_string(), session_id: session_id.clone()
                     }.to_string();
                     let mqtt_message = MQTTMessage {topic, payload};
-                    if Session::set_timer(&session_id).await.is_err() {
+                    if Session::set_timer(&session_id, 120).await.is_err() {
                         warn!("Failed to set time: {}", session_id);
+                    }
+                    self.tx.send(mqtt_message.clone()).await.expect("Failed to send a message to the broker.");
+                    info!("Message sent to MQTT: topic={}, payload={}", mqtt_message.topic, mqtt_message.payload);
+                }
+                "tracking" => {
+                    let (payload, duration) = match commands::tracking::handle_command(&ctx, &command).await {
+                        Some(request_tracking) => request_tracking,
+                        None => return,
+                    };
+                    let session_id = Session::new(ctx, command).unwrap();
+                    let topic = Topic::Command {
+                        service: service.to_string(), session_id: session_id.clone()
+                    }.to_string();
+                    let mqtt_message = MQTTMessage {topic, payload};
+                    if let Some(d) = duration {
+                        if Session::set_timer(&session_id, d).await.is_err() {
+                            warn!("Failed to set time: {}", session_id);
+                        }
                     }
                     self.tx.send(mqtt_message.clone()).await.expect("Failed to send a message to the broker.");
                     info!("Message sent to MQTT: topic={}, payload={}", mqtt_message.topic, mqtt_message.payload);
@@ -195,6 +225,9 @@ impl EventHandler for Handler {
             match service.as_str() {
                 "librarian" => create_commands.push(
                     commands::librarian::register(&name)
+                ),
+                "tracking" => create_commands.push(
+                    commands::tracking::register(&name)
                 ),
                 _ => (),
             }
@@ -270,6 +303,7 @@ async fn main() {
             Topic::Response {
                 service: service.to_string(),
                 session_id: Topic::ANY.to_string(),
+                is_last: TopicBool::Any,
             }.to_string()
         );
     }
@@ -306,9 +340,20 @@ async fn main() {
                 }
             };
             match topic {
-                Topic::Response { service, session_id } => {
-                    let (ctx, cmd) = match Session::get(&session_id) {
-                        Some(session) => session,
+                Topic::Response { service, session_id, is_last } => {
+                    let session = match is_last {
+                        TopicBool::True => {
+                            Session::get_and_remove(&session_id)
+                        },
+                        TopicBool::False => {
+                            Session::get(&session_id)
+                        },
+                        _ => {
+                            Session::get_and_remove(&session_id)
+                        },
+                    };
+                    let (ctx, cmd) = match session {
+                        Some(s) => s,
                         None => {
                             warn!("Session not found for topic: {}", mqtt_msg.topic);
                             continue;
@@ -318,7 +363,19 @@ async fn main() {
                         "librarian" => {
                             match commands::librarian::handle_response(&mqtt_msg.payload) {
                                 Some(content) => {
-                                    MqttBot::send_folloup(&ctx, &cmd, content)
+                                    MqttBot::send_followup(&ctx, &cmd, content)
+                                        .await
+                                        .unwrap_or_else(|err| warn!("Failed to send followup: {}", err));
+                                },
+                                None => {
+                                    warn!("Reply to '{}' command.", cmd.data.name.as_str());
+                                }
+                            }
+                        },
+                        "tracking" => {
+                            match commands::tracking::handle_response(&mqtt_msg.payload) {
+                                Some(content) => {
+                                    MqttBot::send(&ctx, &cmd, content)
                                         .await
                                         .unwrap_or_else(|err| warn!("Failed to send followup: {}", err));
                                 },
@@ -338,7 +395,7 @@ async fn main() {
             
         }
     });
-    let _mqtt_subscriber= tokio::spawn(async move {mqtt_sub.run(topics_to_subscribe, discord_tx).await});
+    let _mqtt_subscriber = tokio::spawn(async move {mqtt_sub.run(topics_to_subscribe, discord_tx).await});
     mqtt_bot.run(mqtt_tx).await;
     info!("Discord bot has stopped.");
 }

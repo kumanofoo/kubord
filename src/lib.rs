@@ -74,6 +74,10 @@ pub struct Config {
     pub ping: Option<PingConfig>,
     /// Heartbeat monitor settings.
     pub heartbeat: Option<HeartbeatConfig>,
+    /// Weather monitor settings.
+    pub weather: Option<WeatherConfig>,
+    /// Tracking items settings.
+    pub tracking: Option<TrackingConfig>,
 }
 
 /// MQTT broker configuration.
@@ -84,13 +88,13 @@ pub struct MqttConfig {
     /// Optional MQTT client ID. If not specified, default to {PREFIX} + {UUID}. See mqtt.rs for details. 
     pub client_id: Option<String>,
     /// Optional QoS settings.
-    pub qos: Option<Vec<i32>>,
+    pub qos: Option<i32>,
 }
 
 impl MqttConfig {
-    /// Returns the configured QoS or the default value `[0]`.
-    pub fn qos_or_default(&self) -> Vec<i32> {
-        self.qos.clone().unwrap_or_else(|| vec![0])
+    /// Returns the configured QoS or the default value `0`.
+    pub fn qos_or_default(&self) -> i32 {
+        self.qos.clone().unwrap_or_else(|| 0)
     }
 }
 
@@ -152,6 +156,34 @@ pub struct HeartbeatConfig {
     pub timeout_minutes: u64,
     /// Interval (minutes) to snooze alerts after sending.
     pub snooze_alerts_interval_minutes: u64,
+}
+
+/// Weather monitor configuration
+#[derive(Debug, Deserialize)]
+pub struct WeatherConfig {
+    /// Device ID for weather monitor.
+    pub device_id: Option<String>,
+    /// AMeDAS Station Code for real time meteorological data
+    pub amedas_station: String,
+    /// Interval (minutes) between AMeDAS checks.
+    pub amedas_interval_minutes: u64,
+    /// Interval (hours) between JMA weather forecast checks.
+    pub temperature_interval_hours: u64,
+    /// AMeDAS Station Code for weather forecast.
+    pub temperature_station: Option<String>,
+}
+
+/// Tracking Shipments configuration
+#[derive(Debug, Deserialize)]
+pub struct TrackingConfig {
+    /// Device ID for tracker.
+    pub device_id: Option<String>,
+    /// Interval (seconds) between tracking checks.
+    pub tracking_interval_seconds: Option<u64>,
+    /// Interval (seconds) between retries.
+    pub retry_interval_seconds: Option<u64>,
+    /// Maximum of retry.
+    pub max_retry: Option<u64>,
 }
 
 /// Loads the application configuration from the specified TOML file.

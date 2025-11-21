@@ -1,6 +1,6 @@
 [package]
 name = "kubord"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [[bin]]
@@ -18,10 +18,18 @@ path = "src/bin/discord-gateway.rs"
 [[bin]]
 name = "librarian"
 
+[[bin]]
+name = "weather"
+
+[[bin]]
+name = "tracking"
+
 [dependencies]
+jma = { version = "0.4", git = "https://github.com/kumanofoo/jma" }
 paho-mqtt = "0.13"
 serenity = { version = "0.12", features = ["client", "gateway", "rustls_backend", "http"] }
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.9"

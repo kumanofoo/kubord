@@ -210,9 +210,9 @@ async fn main() -> Result<(), GenericError> {
             std::process::exit(1);
         }
     };
-    let qos = match &mqtt_config.qos {
+    let qos = match mqtt_config.qos {
         Some(q) => q,
-        None => &vec![0], // Default QoS to 0 if not specified
+        None => 0, // Default QoS to 0 if not specified
     };
     let discord_config = match config.discord {
         Some(discord) => discord,

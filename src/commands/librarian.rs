@@ -38,7 +38,7 @@ pub async fn first_response(ctx: &Context, command: &CommandInteraction, mesg: &
     );
 
     if let Err(why) = command.create_response(&ctx.http, response).await {
-        println!("Failed to send the first resonse: {:?}", why);
+        warn!("Failed to send the first resonse: {:?}", why);
     }      
 }
 

@@ -163,6 +163,9 @@ impl EventHandler for Handler {
                 },
             };
             match service.as_str() {
+                "sensor/amedas" => {
+                    commands::weather::handle_command(&ctx, &command).await;
+                },
                 "librarian" => {
                     let payload = match commands::librarian::handle_command(&ctx, &command).await {
                         Some(request_librarian) => request_librarian,
@@ -178,7 +181,7 @@ impl EventHandler for Handler {
                     }
                     self.tx.send(mqtt_message.clone()).await.expect("Failed to send a message to the broker.");
                     info!("Message sent to MQTT: topic={}, payload={}", mqtt_message.topic, mqtt_message.payload);
-                }
+                },
                 "tracking" => {
                     let (payload, duration) = match commands::tracking::handle_command(&ctx, &command).await {
                         Some(request_tracking) => request_tracking,
@@ -196,7 +199,7 @@ impl EventHandler for Handler {
                     }
                     self.tx.send(mqtt_message.clone()).await.expect("Failed to send a message to the broker.");
                     info!("Message sent to MQTT: topic={}, payload={}", mqtt_message.topic, mqtt_message.payload);
-                }
+                },
                 _ => {
                     warn!("Not implemented slash command.");
                     let unknown = CreateInteractionResponse::Message(
@@ -229,6 +232,10 @@ impl EventHandler for Handler {
                 "tracking" => create_commands.push(
                     commands::tracking::register(&name)
                 ),
+                "sensor/amedas" => {
+                    create_commands.push(
+                        commands::weather::register(&name)
+                )},
                 _ => (),
             }
         }
@@ -269,6 +276,7 @@ async fn main() {
         }
     );
 
+    // List of slash commands
     if args.list {
         if let Some(discord) = &config.discord {
             println!("Discord Slash commands:");
@@ -281,12 +289,14 @@ async fn main() {
         return;
     }
 
+    // Check Discord bot ID
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment.");
     env::var("GUILD_ID")
         .expect("Expected a token in the environment.")
         .parse::<u64>()
         .expect("GUILD_ID must be an integer");
 
+    // Set configuration of discord gateway MQTT Bot
     let config_mqtt_bot = std::sync::Arc::clone(&config);
     let mqtt_bot = MqttBot::new(token.clone(), config_mqtt_bot);
     let mqtt_config = config.mqtt.as_ref().unwrap();
@@ -297,15 +307,47 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    if let Some(discord) = config.discord.as_ref() {
+        if let Some(weather) = discord.weather.as_ref() {
+            let mut code_png = commands::weather::WEATHER_CODE_PNG.write().unwrap();
+            for (key, value) in weather.icons.iter() {
+                code_png.insert(*key, format!("{}/{}", weather.icon_url, value));
+            }
+        }
+    }
+
+    // Set topics to Subscribe
     let mut topics_to_subscribe = Vec::new();
     for service in commands.values() {
-        topics_to_subscribe.push(
-            Topic::Response {
-                service: service.to_string(),
-                session_id: Topic::ANY.to_string(),
-                is_last: TopicBool::Any,
-            }.to_string()
-        );
+        let topic: Vec<&str> = service.split('/').collect();
+        match topic.len() {
+            1 => topics_to_subscribe.push(
+                Topic::Response {
+                    service: service.to_string(),
+                    session_id: Topic::ANY.to_string(),
+                    is_last: TopicBool::Any,
+                }.to_string()
+            ),
+            2 => topics_to_subscribe.push(
+                match topic[0] {
+                    "sensor" => Topic::Sensor {
+                        location: topic[1].to_string(),
+                        device_id: Topic::ANY.to_string(),
+                    }.to_string(),
+                    "monitor" => Topic::Monitor {
+                        device_id: topic[1].to_string(),
+                    }.to_string(),
+                    _ => {
+                        error!("Unknown service format: {}", service);
+                        std::process::exit(1);
+                    },
+                }
+            ),
+            _ => {
+                error!("Unknown service format: {}", service);
+                std::process::exit(1);
+            }
+        }
     }
     info!("Topics to subscribe: {:?}", topics_to_subscribe);
     
@@ -389,6 +431,10 @@ async fn main() {
                             continue;
                         }
                     }
+                },
+                Topic::Sensor { location, device_id } => match location.as_str() {
+                    "amedas" => commands::weather::store_amedas(&device_id, &mqtt_msg.payload),
+                    _ => continue,
                 },
                 _ => continue,
             };

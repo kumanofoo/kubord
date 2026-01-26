@@ -3,14 +3,13 @@ use clap::Parser;
 
 use jma::forecast::JmaForecast;
 use jma::amedas::{
-    station_information, Amedas, AmedasData, AmedasStation
+    station_information, Amedas,
 };
 use jma::forecast_area::ForecastArea;
 use tokio::time::{Duration, interval};
 use tokio_util::sync::CancellationToken;
-use serde::{Deserialize, Serialize};
 use kubord::Config;
-use kubord::mqtt::{Publisher, Topic};
+use kubord::mqtt::{Publisher, Topic, MQTTAmedas, Mqtt};
 
 async fn temperature_publisher(token: CancellationToken, config: std::sync::Arc<Config>) {
     let (temperature_station, temperature_interval_hours) = match &config.weather {
@@ -82,7 +81,7 @@ async fn temperature_publisher(token: CancellationToken, config: std::sync::Arc<
                         continue;
                     },
                 };
-                publisher.publish(&topic, &payload_str).await;
+                publisher.publish_retained_message(&topic, &payload_str).await;
                 info!("publish: {} - {}", topic, payload_str);
             }
             _ = token.cancelled() => {
@@ -92,37 +91,6 @@ async fn temperature_publisher(token: CancellationToken, config: std::sync::Arc<
         }
     }
 }
-
-type Kanji = String;
-type English = String;
-type Code = String;
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct AmedasPayload {
-    station: (Kanji, English, Code),
-    latest_time: String,
-    data: AmedasData,
-}
-
-impl AmedasPayload {
-    fn new(amedas: &Amedas, amedas_station: &str, station_info: &AmedasStation) -> Self {
-        let latest = AmedasData::from(&amedas.get_latest_data().unwrap());
-        AmedasPayload {
-            station: (
-                station_info.kanji_name.to_string(),
-                station_info.english_name.to_string(),
-                amedas_station.to_string(),
-            ),
-            latest_time: amedas.latest_time.to_string(),
-            data: latest.clone(),
-        }
-    }
-    
-    fn json(&self) -> String {
-        serde_json::to_string(self).unwrap()
-    }
-}
-
 
 async fn amedas_publisher(token: CancellationToken, config: std::sync::Arc<Config>)  {
     let (amedas_station, interval_minutes) = match &config.weather {
@@ -152,11 +120,6 @@ async fn amedas_publisher(token: CancellationToken, config: std::sync::Arc<Confi
         }
     };
     
-    let topic = Topic::Sensor {
-        location: format!("amedas"),
-        device_id: amedas_station.to_string(),
-    }.to_string();
-    
     let mut amedas = match Amedas::new(&amedas_station).await {
         Ok(amedas) => amedas,
         Err(why) => {
@@ -166,9 +129,9 @@ async fn amedas_publisher(token: CancellationToken, config: std::sync::Arc<Confi
         }
     };
     
-    let payload_str = AmedasPayload::new(&amedas, &amedas_station, &station_info).json();
-    publisher.publish(&topic, &payload_str).await;
-    info!("publish: {} - {}", topic, payload_str);
+    let mqtt_amedas = MQTTAmedas::new(&amedas, &amedas_station, &station_info);
+    publisher.publish_mqtt(&mqtt_amedas).await;
+    info!("publish: {} - {}", mqtt_amedas.topic(), mqtt_amedas.payload());
 
     let mut interval = interval(Duration::from_secs(interval_minutes*60));
     info!("Amedas publisher start ...");
@@ -178,9 +141,9 @@ async fn amedas_publisher(token: CancellationToken, config: std::sync::Arc<Confi
                 match amedas.update().await {
                     Ok(is_new) => {
                         if is_new {
-                            let payload_str = AmedasPayload::new(&amedas, &amedas_station, &station_info).json();
-                            publisher.publish(&topic, &payload_str).await;
-                            info!("publish: {} - {}", topic, payload_str);
+                            let mqtt_amedas = MQTTAmedas::new(&amedas, &amedas_station, &station_info);
+                            publisher.publish_mqtt(&mqtt_amedas).await;
+                            info!("publish: {} - {}", mqtt_amedas.topic(), mqtt_amedas.payload());
                         }
                         else {
                             info!("No update data");

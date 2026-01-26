@@ -6,6 +6,8 @@ qos = 0
 channel_id = ["1234567890123456789"]
 webhook = "https://discord.com/api/webhooks/1234567890123456789/aaabbbcccdddeeefffAAABBBCCCDDDEEEFFF01234567890123456789001234567890"
 command.lib = "librarian"
+command.track = "tracking"
+command.amedas = "sensor/amedas"
 
 [book]
 #device_id = "librarian"
@@ -31,7 +33,7 @@ snooze_alerts_interval_minutes = 30
 #device_id = "tracking"
 tracking_interval_seconds = 3600
 retry_interval_seconds = 120
-max_retry = 5
+max_retries = 5
 
 [weather]
 #device_id = "weather"

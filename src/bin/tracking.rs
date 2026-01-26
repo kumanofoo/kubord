@@ -1,8 +1,9 @@
 use log::{info, warn, error};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use clap::Parser;
 use chrono::{Utc, DateTime, Local, Datelike, FixedOffset, ParseError};
-use tokio::time::Duration;
+use tokio::time::{Duration, sleep};
 use tokio::task::JoinHandle;
 use kubord::progname;
 use kubord::mqtt::{connect_broker, Publisher, Subscriber, Topic, TopicBool, MQTTMessage};
@@ -13,10 +14,63 @@ use kubord::commands::tracking::{
     SubCommand,
     SubCommandResponse,
 };
+use reqwest::{RequestBuilder, StatusCode};
+
+const DEFAULT_MAX_RETRIES: u32 = 10;
+static MAX_RETRIES: OnceLock<u32> = OnceLock::new();
+
+async fn backoff(atempt: u32) {
+    let wait = Duration::from_secs((2u64.pow(atempt)).min(900));
+    sleep(wait).await;
+}
+
+async fn send_with_retry(request: &RequestBuilder) -> Result<String, String> {
+    let max_retries = *MAX_RETRIES.get().unwrap_or_else(|| {
+        warn!("MAX_RETRIES is uninitialized, so use {}.", DEFAULT_MAX_RETRIES);
+        &DEFAULT_MAX_RETRIES
+    });
+    let mut attempt = 0;
+    loop {
+        let request_clone = request.try_clone().unwrap();
+        let result = request_clone.send().await;
+        match result {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    match resp.text().await {
+                        Ok(text) => return Ok(text),
+                        Err(why) => return Err(why.to_string()),
+                    }
+                }
+                else if status.is_server_error() ||
+                    status == StatusCode::TOO_MANY_REQUESTS ||
+                    attempt < max_retries {
+                    attempt += 1;
+                    backoff(attempt).await;
+                    continue;
+                }
+
+                return Err(resp.status().to_string());
+            },
+            Err(err) => {
+                if (err.is_connect() || err.is_timeout() || err.is_request()) && attempt < max_retries {
+                    attempt += 1;
+                    warn!("Failed to send a request. Retrying... ({} <= {}): {}", attempt, max_retries, err);
+                    backoff(attempt).await;
+                    continue;
+                }
+
+                return Err(err.to_string());
+            },
+        }
+    }
+}
 
 async fn fetch_delivery_status_jp(number: &str) -> Result<TrackingItem, String> {
     let url = Carrier::Jp.query_url(number);
-    let body = reqwest::get(&url).await.unwrap().text().await.unwrap();
+    let client = reqwest::Client::new();
+    let request = client.get(&url);
+    let body = send_with_retry(&request).await?;
     let record_selector = scraper::Selector::parse("tr").unwrap();
     let document = scraper::Html::parse_document(&body);
     let records = document.select(&record_selector);
@@ -199,8 +253,9 @@ async fn fetch_delivery_status_sagawa(number: &str) -> Result<TrackingItem, Stri
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0")
         .build().unwrap();
     
-    let body = client.get(&url).send().await.unwrap().text().await.unwrap();
-    
+    let request = client.get(&url);
+    let body = send_with_retry(&request).await?;
+
     let table_selector = scraper::Selector::parse("#detail1 table").unwrap();
     let document = scraper::Html::parse_document(&body);
     let mut tables = document.select(&table_selector);
@@ -262,7 +317,8 @@ async fn fetch_delivery_status_yamato(number: &str) -> Result<TrackingItem, Stri
     param.insert("number00", "1");
     param.insert("number01", number);
     let client = reqwest::Client::new();
-    let body = client.post(url).form(&param).send().await.unwrap().text().await.unwrap();
+    let request = client.post(url).form(&param);
+    let body = send_with_retry(&request).await?;
     
     let record_selector = scraper::Selector::parse(".tracking-invoice-block-detail > ol > li").unwrap();
     let document = scraper::Html::parse_document(&body);
@@ -343,25 +399,28 @@ async fn main() {
     let mut device_id = progname();
     let mut tracking_interval_seconds: u64 = 60*60; // 1 hour
     let mut retry_interval_seconds: u64 = 120; // 2 minutes
-    let mut max_retry: u64 = 5;
+    let mut max_retries: u32 = DEFAULT_MAX_RETRIES;
     if let Some(tracking) = config.tracking {
-            if let Some(x) = tracking.device_id {
-                device_id = x;
-            }
-            if let Some(x) = tracking.tracking_interval_seconds {
-                tracking_interval_seconds = x;
-            }
-            if let Some(x) = tracking.retry_interval_seconds {
-                retry_interval_seconds = x;
-            }
-            if let Some(x) = tracking.max_retry {
-                max_retry = x;
-            }
+        if let Some(x) = tracking.device_id {
+            device_id = x;
+        }
+        if let Some(x) = tracking.tracking_interval_seconds {
+            tracking_interval_seconds = x;
+        }
+        if let Some(x) = tracking.retry_interval_seconds {
+            retry_interval_seconds = x;
+        }
+        if let Some(x) = tracking.max_retries {
+            max_retries = x;
+        }
+    }
+    if let Err(e) = MAX_RETRIES.set(max_retries) {
+        error!("MAX_RETRIES is already set?: {}", e);
     }
     info!("device_id: {device_id}");
     info!("tracking_interval_seconds: {tracking_interval_seconds}");
     info!("retry_interval_seconds: {retry_interval_seconds}");
-    info!("max_retry: {max_retry}");
+    info!("max_retries: {max_retries}");
     
     let mqtt_config = match config.mqtt {
         Some(mqtt) => mqtt,
@@ -460,7 +519,6 @@ async fn main() {
                             session_id: session_id.clone(),
                             is_last: TopicBool::False,
                         }.to_string();
-                        let mut retry = 0;
                         let item_handle = tokio::spawn(async move {loop {
                             let mut response = match carrier {
                                 Carrier::Jp => fetch_delivery_status_jp(&number_clone).await,
@@ -468,30 +526,9 @@ async fn main() {
                                 Carrier::Sagawa => fetch_delivery_status_sagawa(&number_clone).await,
                             };
                             if let Err(why) = response {
-                                if retry >= max_retry {
-                                    let payload = serde_json::to_string(
-                                        &SubCommandResponse::Add(
-                                            Err(format!("Give up to fetch the tracking data: {}", number_clone))
-                                        )
-                                    ).unwrap();
-                                    let message = MQTTMessage {
-                                        topic: topic.clone(),
-                                        payload: payload.clone()
-                                    };
-                                    if let Err(why) = tx.send(message).await {
-                                        warn!("Failed to send tracking data: {}", why);
-                                    } else {
-                                        info!("Send tracking data to publisher: {:?}", payload);
-                                    }
-                                    warn!("Give up to fetch the tracking data: {}", why);
-                                    break;
-                                }
-                                else {
-                                    retry += 1;
-                                    warn!("Failed to fetch the tracking data (retry: {}): {}", retry, why);
+                                    warn!("Failed to fetch the tracking data: {}", why);
                                     tokio::time::sleep(Duration::from_secs(retry_interval_seconds)).await;
                                     continue;
-                                }
                             }
                             let alias_clone = alias.clone();
                             response = response.map(|mut res| {
@@ -508,7 +545,6 @@ async fn main() {
                             } else {
                                 info!("Send tracking data to publisher: {:?}", payload);
                             }
-                            retry = 0;
                             tokio::time::sleep(Duration::from_secs(tracking_interval_seconds)).await;
                         }});
                         

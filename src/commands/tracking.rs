@@ -24,7 +24,6 @@ pub fn description() -> String {
 }
 
 pub fn register(slash_command_name: &str) -> CreateCommand {
-    println!("slash_command_name: {}", slash_command_name);
     CreateCommand::new(slash_command_name)
         .description(DESCRIPTION)
         .add_option(
@@ -67,7 +66,7 @@ pub async fn first_response(ctx: &Context, command: &CommandInteraction) {
     );
 
     if let Err(why) = command.create_response(&ctx.http, response).await {
-        println!("Failed to send the first resonse: {:?}", why);
+        warn!("Failed to send the first resonse: {:?}", why);
     }      
 }
 
@@ -133,7 +132,6 @@ pub enum SubCommand {
 impl SubCommand {
     fn from_command_interaction(command: &CommandInteraction) -> Option<Self> {
         let json = serde_json::json!(command.data.options).to_string();
-        println!("json: {:?}", json);
         let subcommands_json: Vec<SubCommandJson> = match serde_json::from_str(&json) {
             Ok(subcommand) => subcommand,
             Err(why) => {
@@ -149,7 +147,6 @@ impl SubCommand {
                 return None;
             }
         };
-        println!("subcommand_json: {:?}", subcommand_json);
         match subcommand_json.name.as_str() {
             "add" => {
                 let number = match subcommand_json.options

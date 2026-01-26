@@ -110,6 +110,16 @@ pub struct DiscordConfig {
     pub channel_id: Vec<String>,
     /// Command definitions mapped by name.
     pub commands: HashMap<CommandName, ServiceName>,
+    pub weather: Option<DiscordWeatherIcons>,
+}
+
+/// Discord weather icons
+#[derive(Debug, Deserialize, Clone)]
+pub struct DiscordWeatherIcons {
+    /// Table of weather code and png
+    pub icons: HashMap<u32, String>,
+    /// PNG Url
+    pub icon_url: String,
 }
 
 /// Book search configuration.
@@ -183,7 +193,7 @@ pub struct TrackingConfig {
     /// Interval (seconds) between retries.
     pub retry_interval_seconds: Option<u64>,
     /// Maximum of retry.
-    pub max_retry: Option<u64>,
+    pub max_retries: Option<u32>,
 }
 
 /// Loads the application configuration from the specified TOML file.

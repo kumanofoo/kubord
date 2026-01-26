@@ -155,6 +155,48 @@ impl std::fmt::Display for AnomalyReport {
     }
 }
 
+
+use jma::amedas::{Amedas, AmedasData, AmedasStation};
+type Kanji = String;
+type English = String;
+type Code = String;
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MQTTAmedas {
+    pub station: (Kanji, English, Code),
+    pub latest_time: String,
+    pub data: AmedasData,
+}
+
+impl MQTTAmedas {
+    pub fn new(amedas: &Amedas, amedas_station: &str, station_info: &AmedasStation) -> Self {
+        let latest = AmedasData::from(&amedas.get_latest_data().unwrap());
+        MQTTAmedas {
+            station: (
+                station_info.kanji_name.to_string(),
+                station_info.english_name.to_string(),
+                amedas_station.to_string(),
+            ),
+            latest_time: amedas.latest_time.clone(),
+            data: latest.clone(),
+        }
+    }
+
+    pub fn json(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+}
+
+impl Mqtt for MQTTAmedas {
+    fn topic(&self) -> String {
+        Topic::Sensor { location: "amedas".to_string(), device_id: self.station.2.clone() }.to_string()
+    }
+    fn payload(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+}
+
+
 const PUB_CLIENT_ID_PREFIX: &str = "mqtt-pub";
 const SUB_CLIENT_ID_PREFIX: &str = "mqtt-sub";
 
@@ -290,8 +332,8 @@ impl std::str::FromStr for Topic {
                     Ok(topic_bool) => topic_bool,
                     Err(_) => return Err(ParseTopicError::InvalidFormat),
                 };
-                Ok(Topic::Response {service: service.to_string(), session_id: session_id.to_string(), is_last: is_last})
-	        },
+                Ok(Topic::Response {service: service.to_string(), session_id: session_id.to_string(), is_last})
+	    },
             ["sensor", location, device_id] =>
                 Ok(Topic::Sensor {
                     location: location.to_string(),
@@ -310,10 +352,25 @@ impl std::str::FromStr for Topic {
 }
 
 /// Represents a received MQTT message with topic and payload.
+pub trait Mqtt {
+    fn topic(&self) -> String;
+    fn payload(&self) -> String;
+}
+
 #[derive(Debug, Clone)]
 pub struct MQTTMessage {
     pub topic: String,
     pub payload: String,
+}
+
+impl Mqtt for MQTTMessage {
+    fn topic(&self) -> String {
+        self.topic.clone()
+    }
+
+    fn payload(&self) -> String {
+        self.payload.clone()
+    }
 }
 
 /// Connects to the MQTT broker using the provided configuration.
@@ -383,7 +440,7 @@ impl Subscriber {
         client.connect(conn_opts).await?;
 
         Ok(Subscriber {
-            qos: qos,
+            qos,
             client,
         })
     }
@@ -485,5 +542,23 @@ impl Publisher {
                 warn!("Failed to publish to MQTT: {:?}", why);
             },
         }
+    }
+
+    /// Publishes a retained message to the specified topic.
+    pub async fn publish_retained_message(&self, topic: &str, payload: &str) {
+        let msg = mqtt::Message::new_retained(topic, payload.as_bytes(), 0);
+        debug!("topic: {}, payload: {}", msg.topic(), std::str::from_utf8(msg.payload()).unwrap());
+        match self.client.publish(msg).await {
+            Ok(_) => debug!("Successfully published to MQTT: Topic='{}', Payload='{}', Retained", topic, payload),
+            Err(why) => {
+                warn!("Failed to publish to MQTT: {:?}", why);
+            },
+        }
+    }
+
+    pub async fn publish_mqtt<T: Mqtt>(&self, mqtt: &T) {
+        let topic = mqtt.topic();
+        let payload = mqtt.payload();
+        self.publish(&topic, &payload).await;
     }
 }

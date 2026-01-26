@@ -23,7 +23,7 @@
 //!     let config = MqttConfig {
 //!         broker: "tcp://localhost:1883".to_string(),
 //!         client_id: None,
-//!         qos: Some(vec![0]),
+//!         qos: Some(0),
 //!     };
 //!
 //!     // Create channel
@@ -56,7 +56,7 @@
 //!     let config = MqttConfig {
 //!         broker: "tcp://localhost:1883".to_string(),
 //!         client_id: None,
-//!         qos: Some(vec![0])
+//!         qos: Some(0)
 //!     };
 //! 
 //!     // Create publisher

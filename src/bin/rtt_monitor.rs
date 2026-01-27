@@ -471,7 +471,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = match kubord::load_config() {
         Ok(config) => config,
         Err(why) => {
-            error!("Configration file not found: {:?}", why);
+            error!("Configration file error: {}", why);
             std::process::exit(1);
         }
     };

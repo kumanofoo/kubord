@@ -23,7 +23,7 @@
 //!     let config = MqttConfig {
 //!         broker: "tcp://localhost:1883".to_string(),
 //!         client_id: None,
-//!         qos: Some(vec![0]),
+//!         qos: Some(0),
 //!     };
 //!
 //!     // Create channel
@@ -56,7 +56,7 @@
 //!     let config = MqttConfig {
 //!         broker: "tcp://localhost:1883".to_string(),
 //!         client_id: None,
-//!         qos: Some(vec![0])
+//!         qos: Some(0)
 //!     };
 //! 
 //!     // Create publisher
@@ -155,6 +155,48 @@ impl std::fmt::Display for AnomalyReport {
     }
 }
 
+
+use jma::amedas::{Amedas, AmedasData, AmedasStation};
+type Kanji = String;
+type English = String;
+type Code = String;
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MQTTAmedas {
+    pub station: (Kanji, English, Code),
+    pub latest_time: String,
+    pub data: AmedasData,
+}
+
+impl MQTTAmedas {
+    pub fn new(amedas: &Amedas, amedas_station: &str, station_info: &AmedasStation) -> Self {
+        let latest = AmedasData::from(&amedas.get_latest_data().unwrap());
+        MQTTAmedas {
+            station: (
+                station_info.kanji_name.to_string(),
+                station_info.english_name.to_string(),
+                amedas_station.to_string(),
+            ),
+            latest_time: amedas.latest_time.clone(),
+            data: latest.clone(),
+        }
+    }
+
+    pub fn json(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+}
+
+impl Mqtt for MQTTAmedas {
+    fn topic(&self) -> String {
+        Topic::Sensor { location: "amedas".to_string(), device_id: self.station.2.clone() }.to_string()
+    }
+    fn payload(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+}
+
+
 const PUB_CLIENT_ID_PREFIX: &str = "mqtt-pub";
 const SUB_CLIENT_ID_PREFIX: &str = "mqtt-sub";
 
@@ -176,6 +218,38 @@ impl std::fmt::Display for ParseTopicError {
 
 impl std::error::Error for ParseTopicError {}
 
+/// Enum representing a boolean value intended for use as part of an MQTT topic.
+///
+/// This enum introduces the `Any` variant to represent a wildcard for
+/// subscription purposes, in addition to the standard true/false values.
+pub enum TopicBool {
+    True, False, Any
+}
+
+impl std::fmt::Display for TopicBool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	match self {
+	    TopicBool::True => write!(f, "true"),
+	    TopicBool::False => write!(f, "false"),
+	    TopicBool::Any => write!(f, "+"),
+	}
+    }
+}
+
+impl std::str::FromStr for TopicBool {
+    type Err = ParseTopicError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "true" | "True" | "TRUE"  => Ok(TopicBool::True),
+            "false" | "False" | "FALSE" => Ok(TopicBool::False),
+            _ => Err(ParseTopicError::InvalidFormat),
+        }
+    }
+}
+
+
 /// Represents MQTT topic formats used in the application.
 ///
 /// - `Command`: Used to send commands to a device (e.g., turning a light on/off).
@@ -189,7 +263,7 @@ pub enum Topic {
 
     /// Topic for sending responses to a command or requests.
     /// Example: Used by a device to reply with its status after receiving a command.
-    Response { service: String, session_id: String },
+    Response { service: String, session_id: String, is_last: TopicBool},
 
     /// Topic for publishing periodic sensor measurement results.
     /// Example: Used by a temperature sensor to publish readings every 10 minutes.
@@ -212,7 +286,8 @@ impl Topic {
     pub fn all_response() -> Self {
         Topic::Response {
             service: "+".to_string(),
-            session_id: "#".to_string(),
+            session_id: "+".to_string(),
+	        is_last: TopicBool::Any,
         }
     }
     pub fn all_sensor() -> Self {
@@ -233,8 +308,8 @@ impl std::fmt::Display for Topic {
         match self {
             Topic::Command { service, session_id } =>
                 write!(f, "command/{}/{}", service, session_id),
-            Topic::Response { service, session_id } =>
-                write!(f, "response/{}/{}", service, session_id),
+            Topic::Response { service, session_id, is_last } =>
+                write!(f, "response/{}/{}/{}", service, session_id, is_last),
             Topic::Sensor { location, device_id } =>
                 write!(f, "sensor/{}/{}", location, device_id),
             Topic::Monitor { device_id } =>
@@ -252,8 +327,13 @@ impl std::str::FromStr for Topic {
         match parts.as_slice() {
             ["command", service, session_id] =>
                 Ok(Topic::Command {service: service.to_string(), session_id: session_id.to_string()}),
-            ["response", service, session_id] =>
-                Ok(Topic::Response {service: service.to_string(), session_id: session_id.to_string()}),
+            ["response", service, session_id, is_last_str] => {
+                let is_last = match TopicBool::from_str(is_last_str) {
+                    Ok(topic_bool) => topic_bool,
+                    Err(_) => return Err(ParseTopicError::InvalidFormat),
+                };
+                Ok(Topic::Response {service: service.to_string(), session_id: session_id.to_string(), is_last})
+	    },
             ["sensor", location, device_id] =>
                 Ok(Topic::Sensor {
                     location: location.to_string(),
@@ -272,10 +352,25 @@ impl std::str::FromStr for Topic {
 }
 
 /// Represents a received MQTT message with topic and payload.
+pub trait Mqtt {
+    fn topic(&self) -> String;
+    fn payload(&self) -> String;
+}
+
 #[derive(Debug, Clone)]
 pub struct MQTTMessage {
     pub topic: String,
     pub payload: String,
+}
+
+impl Mqtt for MQTTMessage {
+    fn topic(&self) -> String {
+        self.topic.clone()
+    }
+
+    fn payload(&self) -> String {
+        self.payload.clone()
+    }
 }
 
 /// Connects to the MQTT broker using the provided configuration.
@@ -310,7 +405,7 @@ pub async fn connect_broker(config: &MqttConfig) -> Result<mqtt::AsyncClient, Ge
 
 /// MQTT subscriber for receiving messages from specified topics.
 pub struct Subscriber {
-    pub qos: Vec<i32>,
+    pub qos: i32,
     client: mqtt::AsyncClient,
 }
 
@@ -321,9 +416,9 @@ impl Subscriber {
             Some(id) => id,
             None => &format!("{}-{}", SUB_CLIENT_ID_PREFIX, uuid::Uuid::new_v4()),
         };
-        let qos = match &config.qos {
+        let qos = match config.qos {
             Some(q) => q,
-            None => &vec![0], // Default QoS to 0 if not specified
+            None => 0, // Default QoS to 0 if not specified
         };
 
         info!("Using broker: {}", config.broker);
@@ -345,14 +440,14 @@ impl Subscriber {
         client.connect(conn_opts).await?;
 
         Ok(Subscriber {
-            qos: qos.clone(),
+            qos,
             client,
         })
     }
 
     pub fn new_from_client(
         client: mqtt::AsyncClient,
-        qos: Vec<i32>,
+        qos: i32,
     ) -> Self {
         Subscriber {
             qos,
@@ -363,7 +458,8 @@ impl Subscriber {
     /// Runs the subscriber, listening to topics and forwarding messages to the provided channel.
     pub async fn run(&mut self, topics: Vec<String>, tx: Sender<MQTTMessage>) -> Result<(), GenericError> {
         let mut strm = self.client.get_stream(32);
-        self.client.subscribe_many(&topics, &self.qos);
+	let qos = vec![self.qos; topics.len()];
+        self.client.subscribe_many(&topics, &qos);
 
         info!("start subscribing...");
         while let Some(msg_opt) = strm.next().await {
@@ -397,9 +493,9 @@ impl Publisher {
             Some(id) => id,
             None => &format!("{}-{}", PUB_CLIENT_ID_PREFIX, uuid::Uuid::new_v4()),
         };
-        let qos = match &config.qos {
+        let qos = match config.qos {
             Some(q) => q,
-            None => &vec![0], // Default Qos to 0 if not specified
+            None => 0, // Default Qos to 0 if not specified
         };
         
         info!("Using broker: {}", config.broker);
@@ -446,5 +542,23 @@ impl Publisher {
                 warn!("Failed to publish to MQTT: {:?}", why);
             },
         }
+    }
+
+    /// Publishes a retained message to the specified topic.
+    pub async fn publish_retained_message(&self, topic: &str, payload: &str) {
+        let msg = mqtt::Message::new_retained(topic, payload.as_bytes(), 0);
+        debug!("topic: {}, payload: {}", msg.topic(), std::str::from_utf8(msg.payload()).unwrap());
+        match self.client.publish(msg).await {
+            Ok(_) => debug!("Successfully published to MQTT: Topic='{}', Payload='{}', Retained", topic, payload),
+            Err(why) => {
+                warn!("Failed to publish to MQTT: {:?}", why);
+            },
+        }
+    }
+
+    pub async fn publish_mqtt<T: Mqtt>(&self, mqtt: &T) {
+        let topic = mqtt.topic();
+        let payload = mqtt.payload();
+        self.publish(&topic, &payload).await;
     }
 }

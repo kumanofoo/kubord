@@ -1,11 +1,13 @@
 [mqtt]
 broker = "tcp://localhost:1883"
-qos = [0]
+qos = 0
 
 [discord]
 channel_id = ["1234567890123456789"]
 webhook = "https://discord.com/api/webhooks/1234567890123456789/aaabbbcccdddeeefffAAABBBCCCDDDEEEFFF01234567890123456789001234567890"
 command.lib = "librarian"
+command.track = "tracking"
+command.amedas = "sensor/amedas"
 
 [book]
 #device_id = "librarian"
@@ -26,3 +28,16 @@ device_id = "rttmon"
 interval_seconds = 60
 timeout_minutes = 15
 snooze_alerts_interval_minutes = 30
+
+[tracking]
+#device_id = "tracking"
+tracking_interval_seconds = 3600
+retry_interval_seconds = 120
+max_retries = 5
+
+[weather]
+#device_id = "weather"
+amedas_station = "14163"  # saporo
+amedas_interval_minutes = 10
+temperature_interval_hours = 3
+#temperature_station = "14163"  # sapporo

@@ -192,13 +192,14 @@ struct State {
 
 #[tokio::main]
 async fn main() -> Result<(), GenericError> {
-    env_logger::init_from_env(env_logger::Env::new().default_filter_or("mqtt_heartbeat_monitor=info"));
+    //env_logger::init_from_env(env_logger::Env::new().default_filter_or("mqtt_heartbeat_monitor=info"));
+    env_logger::init();
 
     // Load configuration
     let config = match kubord::load_config() {
         Ok(config) => config,
         Err(why) => {
-            error!("Configuration file not found: {:?}", why);
+            error!("Configuration file error: {}", why);
             std::process::exit(1);
         }
     };
@@ -209,9 +210,9 @@ async fn main() -> Result<(), GenericError> {
             std::process::exit(1);
         }
     };
-    let qos = match &mqtt_config.qos {
+    let qos = match mqtt_config.qos {
         Some(q) => q,
-        None => &vec![0], // Default QoS to 0 if not specified
+        None => 0, // Default QoS to 0 if not specified
     };
     let discord_config = match config.discord {
         Some(discord) => discord,

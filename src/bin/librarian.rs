@@ -3,7 +3,7 @@ use std::env;
 use std::collections::HashMap;
 use kubord::book::BookDb;
 use kubord::{GenericError, progname};
-use kubord::mqtt::{self, connect_broker, MQTTMessage, Publisher, Subscriber};
+use kubord::mqtt::{self, connect_broker, MQTTMessage, Publisher, Subscriber, TopicBool};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 
@@ -69,7 +69,7 @@ async fn main() -> Result<(), GenericError> {
     let config = match kubord::load_config() {
         Ok(config) =>  config,
         Err(why) => {
-            eprintln!("Configration file not found: {}", why);
+            error!("Configration file error: {}", why);
             std::process::exit(1);
         }
     };
@@ -82,20 +82,20 @@ async fn main() -> Result<(), GenericError> {
             (book.libraries.clone(), service)
         },
         None => {
-            eprintln!("'Book' key not found in config.");
+            error!("'Book' key not found in config.");
             std::process::exit(1);
         }
     };
     let mqtt_config = match config.mqtt {
         Some(mqtt) => mqtt,
         None => {
-            eprintln!("'mqtt' key not found in config.");
+            error!("'mqtt' key not found in config.");
             std::process::exit(1);
         }
     };
-    let qos = match &mqtt_config.qos {
+    let qos = match mqtt_config.qos {
         Some(q) => q,
-        None => &vec![0], // Default QoS to 0 if not specified
+        None => 0, // Default QoS to 0 if not specified
     };
 
     // MQTT topic for librarian.
@@ -112,9 +112,7 @@ async fn main() -> Result<(), GenericError> {
     info!("Connected to MQTT broker: {}", mqtt_config.broker);
 
     // Setup subscriber and publisher.
-    let mut subscriber = Subscriber::new_from_client(
-        mqtt_client.clone(),
-        qos.clone());
+    let mut subscriber = Subscriber::new_from_client(mqtt_client.clone(), qos);
     let publisher = Publisher::new_from_client(mqtt_client.clone());
 
     // Setup Channel between MQTT and Book searching.
@@ -148,7 +146,7 @@ async fn main() -> Result<(), GenericError> {
                         continue;
                     }
                 };
-                let response_topic = mqtt::Topic::Response { service, session_id }.to_string();
+                let response_topic = mqtt::Topic::Response { service, session_id, is_last: TopicBool::True }.to_string();
                 info!("Publishing response to topic: {}", response_topic);
                 let response = bookdb.json();
                 publisher.publish(&response_topic, &response).await;

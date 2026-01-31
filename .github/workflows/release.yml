@@ -54,20 +54,21 @@ jobs:
         run: |
           PROJECT_ID="${{ env.PROJECT_NAME }}-${{ github.ref_name }}-${{ matrix.target }}"
           echo "PROJECT_ID=${PROJECT_ID}" >> $GITHUB_ENV
-          mkdir "${PROJECT_ID}"
+          mkdir -p "${PROJECT_ID}/bin"
 
           BINS=$(cargo read-manifest --manifest-path Cargo.toml | jq -r '.targets[] | select(.kind[] | contains("bin")) | .name')
           
           for bin_name in $BINS; do
             echo "Packaging $bin_name..."
-            cp "target/${{ matrix.target }}/release/$bin_name" "${PROJECT_ID}/"
+            cp "target/${{ matrix.target }}/release/$bin_name" "${PROJECT_ID}/bin/"
           done
 
       - name: Create archive
         run: |
           # developブランチの場合は"develop"、タグの場合はタグ名（例: v1.0.0）を取得
           ARCHIVE_NAME="${{ env.PROJECT_ID }}.tar.gz"
-          
+
+          cp dist/* "${{ env.PROJECT_ID }}/"
           tar -czvf "${ARCHIVE_NAME}" "./${{ env.PROJECT_ID }}"
 
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV

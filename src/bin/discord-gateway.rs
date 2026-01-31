@@ -255,8 +255,8 @@ impl EventHandler for Handler {
 #[derive(Parser)]
 #[command(version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
 struct Args {
-    #[arg(short = 'c', long = "config", default_value = "./config.toml")]
-    config_path: String,
+    #[arg(short = 'c', long = "config")]
+    config_path: Option<String>,
     #[arg(short = 'l', long = "list")]
     list: bool,
 }
@@ -267,13 +267,13 @@ async fn main() {
     
     let args = Args::parse();
     let config = std::sync::Arc::new(
-        match kubord::load_config_with_filename(&args.config_path) {
-            Ok(config) => config,
-            Err(why) => {
-                error!("Configration file error: {}", why);
-                std::process::exit(1);
-            }
-        }
+        match args.config_path {
+            Some(path) => kubord::load_config_with_filename(&path),
+            None => kubord::load_config(),
+        }.unwrap_or_else(|err|{
+            error!("Configration file error: {}", err);
+            std::process::exit(1);
+        })
     );
 
     // List of slash commands

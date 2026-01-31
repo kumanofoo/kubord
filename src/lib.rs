@@ -41,7 +41,7 @@ pub mod book;
 pub mod mqtt;
 pub mod commands;
 use std::collections::HashMap;
-use clap::Parser;
+use std::env;
 use serde::Deserialize;
 
 /// Generic error type used throughout the crate.
@@ -50,15 +50,6 @@ pub type GenericError = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub fn progname() -> String {
     let command_path = std::env::args().next().unwrap();
     std::path::Path::new(&command_path).file_name().unwrap().to_str().unwrap().to_string()
-}
-
-/// Command-line arguments for configuration file path.
-#[derive(Parser)]
-#[command(version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
-struct Args {
-    /// Path to the configuration file (TOML format).
-    #[arg(short = 'c', long = "config", default_value = "./config.toml")]
-    config_path: String,
 }
 
 /// Application configuration loaded from TOML file.
@@ -207,9 +198,8 @@ pub struct TrackingConfig {
 /// let config = kubord::load_config().unwrap();
 /// ```
 pub fn load_config() -> Result<Config, GenericError> {
-    let args = Args::parse();
-    
-    let config_str = std::fs::read_to_string(&args.config_path)?;
+    let config_path = env::var("KUBORD_CONFIG_PATH").unwrap_or("./config.toml".to_string());
+    let config_str = std::fs::read_to_string(&config_path)?;
     let config = toml::from_str(&config_str)?;
     Ok(config)
 }

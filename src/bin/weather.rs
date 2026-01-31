@@ -1,5 +1,4 @@
 use log::{info, warn, error};
-use clap::Parser;
 
 use jma::forecast::JmaForecast;
 use jma::amedas::{
@@ -163,20 +162,12 @@ async fn amedas_publisher(token: CancellationToken, config: std::sync::Arc<Confi
     }
 }
 
-#[derive(Parser)]
-#[command(version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
-struct Args {
-    #[arg(short = 'c', long = "config", default_value = "./config.toml")]
-    config_path: String,
-}
-
 #[tokio::main]
 async fn main() {
     env_logger::init();
 
-    let args = Args::parse();
     let config = std::sync::Arc::new(
-        match kubord::load_config_with_filename(&args.config_path) {
+        match kubord::load_config() {
             Ok(config) => config,
             Err(why) => {
                 error!("Configuration file error: {}", why);

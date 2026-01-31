@@ -1,7 +1,6 @@
 use log::{info, warn, error};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use clap::Parser;
 use chrono::{Utc, DateTime, Local, Datelike, FixedOffset, ParseError};
 use tokio::time::{Duration, sleep};
 use tokio::task::JoinHandle;
@@ -375,19 +374,11 @@ async fn fetch_delivery_status_yamato(number: &str) -> Result<TrackingItem, Stri
     })
 }
 
-#[derive(Parser)]
-#[command(version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
-struct Args {
-    #[arg(short = 'c', long = "config", default_value = "./config.toml")]
-    config_path: String,
-}
-
 #[tokio::main]
 async fn main() {
     env_logger::init();
 
-    let args = Args::parse();
-    let config = match kubord::load_config_with_filename(&args.config_path) {
+    let config = match kubord::load_config() {
             Ok(config) => config,
             Err(why) => {
                 error!("Configuration file error: {}", why);

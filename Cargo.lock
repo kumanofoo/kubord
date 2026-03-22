@@ -1240,8 +1240,8 @@ dependencies = [
 
 [[package]]
 name = "jma"
-version = "0.5.1"
-source = "git+https://github.com/kumanofoo/jma#25677bce0d5d49a35c012bb35ce7916ac6731d54"
+version = "0.6.0"
+source = "git+https://github.com/kumanofoo/jma#18ad754526149838097c8ba0648438d91a6adce8"
 dependencies = [
  "chrono",
  "clap",

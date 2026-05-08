@@ -392,10 +392,10 @@ pub async fn connect_broker(config: &MqttConfig) -> Result<mqtt::AsyncClient, Ge
     let client = mqtt::AsyncClient::new(create_opts)?;
     let conn_opts = mqtt::ConnectOptionsBuilder::new()
         .keep_alive_interval(Duration::from_secs(20))
-        .clean_session(true)
+        .clean_session(false)
         .automatic_reconnect(
-        Duration::from_secs(1),
-        Duration::from_secs(30)
+            Duration::from_secs(1),
+            Duration::from_secs(30)
         )
         .finalize();
     client.connect(conn_opts).await?;
@@ -434,7 +434,11 @@ impl Subscriber {
         // Define the set of options for the connection.
         let conn_opts = mqtt::ConnectOptionsBuilder::new()
             .keep_alive_interval(Duration::from_secs(30))
-            .clean_session(true)
+            .clean_session(false)
+            .automatic_reconnect(
+                Duration::from_secs(1),
+                Duration::from_secs(30)
+            )
             .finalize();
         // Make the connection to the broker
         client.connect(conn_opts).await?;
@@ -511,7 +515,7 @@ impl Publisher {
         
         let conn_opts = mqtt::ConnectOptionsBuilder::new()
             .keep_alive_interval(Duration::from_secs(20))
-            .clean_session(true)
+            .clean_session(false)
             .automatic_reconnect(
                 Duration::from_secs(1),
                 Duration::from_secs(30)

@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# ==========================================
+# deb11
+#
+# Builds Rust binaries in a Debian 11 Docker container,
+# then copies them to ./deb11bin.
+#
+# usage:
+#   ./deb11
+#   ./deb11 bin1
+#   ./deb11 bin1 bin2
+#
+# If no arguments are provided:
+#   Use package.name from Cargo.toml.
+# ==========================================
+
+IMAGE_NAME="rust-deb11-builder"
+CONTAINER_NAME="rust-deb11-temp"
+OUTPUT_DIR="target/deb11bin"
+
+# ------------------------------------------
+# Check for Cargo.toml
+# ------------------------------------------
+
+if [[ ! -f Cargo.toml ]]; then
+    echo "ERROR: Cargo.toml was not found"
+    echo "Run this command from a Rust project directory"
+    exit 1
+fi
+
+# ------------------------------------------
+# Determine binary names
+# ------------------------------------------
+
+BIN_NAMES=()
+
+if [[ $# -eq 0 ]]; then
+    PROJECT_NAME=$(
+        grep '^name *= *"' Cargo.toml \
+        | head -n1 \
+        | sed -E 's/name *= *"([^"]+)"/\1/'
+    )
+
+    if [[ -z "${PROJECT_NAME}" ]]; then
+        echo "ERROR: Could not read the project name from Cargo.toml"
+        exit 1
+    fi
+
+    BIN_NAMES+=("${PROJECT_NAME}")
+else
+    BIN_NAMES=("$@")
+fi
+
+# ------------------------------------------
+# Output directory
+# ------------------------------------------
+
+mkdir -p "${OUTPUT_DIR}"
+
+# ------------------------------------------
+# Generate temporary Dockerfile
+# ------------------------------------------
+
+TMP_DOCKERFILE=".Dockerfile.deb11.tmp"
+
+cat > "${TMP_DOCKERFILE}" <<'EOF'
+FROM rust:1-bullseye
+
+RUN apt-get update && apt-get install -y cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+
+RUN cargo build --release
+EOF
+
+# ------------------------------------------
+# Docker build
+# ------------------------------------------
+
+echo "==> Docker image build"
+
+docker build \
+    -f "${TMP_DOCKERFILE}" \
+    -t "${IMAGE_NAME}" \
+    .
+
+# ------------------------------------------
+# Create container
+# ------------------------------------------
+
+echo "==> Create container"
+
+docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+
+docker create \
+    --name "${CONTAINER_NAME}" \
+    "${IMAGE_NAME}" \
+    >/dev/null
+
+# ------------------------------------------
+# Copy binaries
+# ------------------------------------------
+
+echo "==> Copy binaries"
+
+for BIN in "${BIN_NAMES[@]}"; do
+
+    SRC="/app/target/release/${BIN}"
+    DST="${OUTPUT_DIR}/${BIN}"
+
+    echo "  ${BIN}"
+
+    docker cp \
+        "${CONTAINER_NAME}:${SRC}" \
+        "${DST}"
+
+    chmod +x "${DST}"
+done
+
+# ------------------------------------------
+# cleanup
+# ------------------------------------------
+
+echo "==> Cleanup"
+
+docker rm -f "${CONTAINER_NAME}" >/dev/null
+rm -f "${TMP_DOCKERFILE}"
+
+echo
+echo "DONE"
+echo
+echo "output:"
+echo "  ./${OUTPUT_DIR}/"

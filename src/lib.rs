@@ -35,6 +35,7 @@
 //! interval_seconds = 60
 //! timeout_minutes = 15
 //! snooze_alerts_interval_minutes = 30
+//! ping_stats = true
 //! ```
 
 pub mod book;
@@ -157,6 +158,8 @@ pub struct HeartbeatConfig {
     pub timeout_minutes: u64,
     /// Interval (minutes) to snooze alerts after sending.
     pub snooze_alerts_interval_minutes: u64,
+    /// Notify of anomalies in ping statistics
+    pub ping_stats: bool,
 }
 
 /// Weather monitor configuration

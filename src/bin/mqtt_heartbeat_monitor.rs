@@ -255,12 +255,18 @@ async fn main() -> Result<(), GenericError> {
             state.last_heartbeat = Utc::now().timestamp();
 
             if let Ok(report) = mqtt::AnomalyReport::from_str(&msg.payload) {
-                if let Some(webhook_message) = DiscordWebhook::alart(report) {
-        		    // Send a anomaly report.
-                    info!("Anomaly detected.");
-                    let _ = tokio::spawn(DiscordWebhook::send(webhook_message, webhook.clone()));
-                } else {
-                    // No anomalies.
+                if heartbeat_config.ping_stats {
+                    if let Some(webhook_message) = DiscordWebhook::alart(report) {
+                        // Send a anomaly report.
+                        info!("Anomaly detected.");
+                        let _ = tokio::spawn(DiscordWebhook::send(webhook_message, webhook.clone()));
+                    } else {
+                        // No anomalies.
+                        info!("They are alive.");
+                    }
+                }
+                else {
+                    // Recived heartbeat
                     info!("They are alive.");
                 }
             } else {
